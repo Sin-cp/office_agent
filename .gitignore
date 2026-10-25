@@ -1,0 +1,19 @@
+# Existing local learning files (may contain credentials)
+/py/
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+node_modules/
+dist/
+*.tsbuildinfo
+.DS_Store
+.idea/
+.vscode/
+uploads/
+outputs/
+*.db
+*.log
