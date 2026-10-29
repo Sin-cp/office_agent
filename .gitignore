@@ -19,3 +19,6 @@ outputs/
 *.log
 
 /backend/data/
+
+# Docker deployment persistent data
+/deploy-data/

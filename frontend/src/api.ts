@@ -1,4 +1,5 @@
 export interface FileInfo {
+  source_file_id?: string | null;
   id: string;
   name: string;
   size: number;
@@ -44,3 +45,19 @@ export function formatSize(bytes: number) {
     ? `${(bytes / 1024).toFixed(1)} KB`
     : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
+
+export interface DocumentBlock {
+  id: string; position: number; kind: 'heading' | 'paragraph'; level: number | null;
+  text: string; style: string; editable: boolean; reason: string;
+}
+export interface DocumentContent {
+  file: FileInfo; revision: string; blocks: DocumentBlock[]; notice: string; table_count: number;
+}
+export const readDocument = (id: string) => request<DocumentContent>(`/api/files/${encodeURIComponent(id)}/content`);
+export const editDocument = (id: string, change: {block_id: string; revision: string; expected_text: string; new_text: string}) =>
+  request<FileInfo>(`/api/files/${encodeURIComponent(id)}/edits`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(change),
+  });
+
+export const deleteFile = (id: string) =>
+  request<{ id: string; deleted: boolean }>(`/api/files/${encodeURIComponent(id)}`, { method: 'DELETE' });

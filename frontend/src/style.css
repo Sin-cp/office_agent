@@ -293,13 +293,6 @@ footer {
   color: #596ed7;
   text-decoration: none;
 }
-.drawer-footer {
-  border-top: 1px solid #edf0f6;
-  padding: 20px;
-  text-align: center;
-  color: #9aa5b5;
-  font-size: 11px;
-}
 .empty {
   padding: 70px 10px;
   text-align: center;
@@ -399,3 +392,49 @@ footer {
     width: 100%;
   }
 }
+
+/* Desktop document workbench */
+main:has(.document-editor) { max-width: 1120px; }
+.editor-header { display: flex; align-items: center; gap: 20px; justify-content: space-between; }
+.editor-header h2 { font-size: 22px; overflow-wrap: anywhere; margin: 0; }
+.editor-header p, .editor-notice { color: #78859a; font-size: 12px; line-height: 1.8; }
+.editor-header .text-button { margin: 0; flex-shrink: 0; }
+.editor-columns { display: grid; grid-template-columns: minmax(250px, 1fr) minmax(300px, 1fr); gap: 24px; margin-top: 20px; }
+.block-panel, .replacement-panel { min-width: 0; background: white; border: 1px solid #e0e6f0; border-radius: 16px; padding: 20px; }
+.block-panel input { width: 100%; padding: 12px; border: 1px solid #dce2ee; border-radius: 8px; font: inherit; }
+.block-list { max-height: 580px; overflow: auto; margin-top: 16px; }
+.block { display: block; width: 100%; padding: 14px; text-align: left; border: 1px solid transparent; border-bottom-color: #edf0f6; background: white; border-radius: 8px; }
+.block:hover, .block.selected { background: #f0f3ff; border-color: #a4b1ee; }
+.block-label { display: block; color: #7789b4; font-size: 11px; margin-bottom: 8px; }
+.block-text { display: block; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.7; color: #334157; }
+.replacement-panel label { display: block; font-size: 12px; color: #7c889b; margin: 18px 0 8px; }
+.original-text { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 180px; overflow: auto; font-size: 14px; line-height: 1.7; background: #f6f8fc; padding: 12px; border-radius: 8px; }
+.replacement-panel textarea { border: 1px solid #dce2ee; border-radius: 8px; padding: 12px; resize: vertical; }
+.primary-button { padding: 12px 18px; background: #596ee0; color: white; border: none; border-radius: 9px; }
+.edit-success { margin-top: 22px; padding: 16px; background: #eff8f3; border-radius: 10px; font-size: 13px; overflow-wrap: anywhere; }
+.edit-success a { color: #4865ce; }.edit-success .text-button { margin: 12px 0 0; }.file-edit { display: inline-block; margin: 0 12px 10px 0; padding: 6px 10px; }.file-details small { display: block; color: #8b97a7; margin-bottom: 8px; }
+
+.selected-file { display: inline-flex; align-items: center; gap: 10px; max-width: 100%; padding: 6px 8px 6px 12px; margin-bottom: 14px; border: 1px solid #dfe3f3; border-radius: 12px; background: #f5f6ff; }
+.selected-file-icon { color: #5966db; font-weight: 800; }
+.selected-file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+.selected-file .icon-button { flex-shrink: 0; width: 28px; height: 28px; font-size: 22px; }
+.document-viewer .block-panel { margin-top: 20px; }
+.document-viewer .block { cursor: default; }
+.document-viewer .block-text { margin: 8px 0 0; }
+
+.delete-file { color: #dc4545; flex-shrink: 0; margin-left: auto; }
+.delete-file:hover { color: #bb2424; background: #fff0f0; }
+.delete-file:disabled { opacity: .45; cursor: wait; }
+.el-button.delete-confirm-button { --el-button-bg-color: #dc4545; --el-button-border-color: #dc4545; --el-button-hover-bg-color: #c93030; --el-button-hover-border-color: #c93030; }
+
+/* The document scrolls inside its preview; header and footer stay in place. */
+.viewer-layout { height: 100dvh; min-height: 0; }
+.viewer-layout > main { flex: 1; min-height: 0; max-width: none; margin: 0; padding: 24px 0 16px; display: flex; }
+.viewer-layout > footer { flex-shrink: 0; }
+.document-viewer { width: 100%; min-height: 0; display: flex; flex-direction: column; gap: 20px; }
+.document-viewer .editor-header { flex-shrink: 0; }
+.viewer-actions { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+.document-preview { flex: 1; min-height: 0; overflow: hidden; background: #eef1f6; border: 1px solid #dfe5ef; border-radius: 16px; }
+.document-preview iframe { display: block; border: 0; width: 100%; height: 100%; background: white; }
+.preview-status { padding: 36px; text-align: center; color: #78859a; }
+.preview-status.error { color: #c94040; }

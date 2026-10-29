@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 class FileInfo(BaseModel):
+    source_file_id: str | None = None
     id: str
     name: str
     size: int
@@ -103,3 +104,19 @@ def download_file(request: Request, file_id: str):
         filename=record["name"],
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     )
+
+
+@router.delete("/{file_id}")
+def delete_file(request: Request, file_id: str):
+    try:
+        UUID(file_id)
+    except ValueError:
+        raise HTTPException(404, "文件不存在")
+    try:
+        deleted = database.delete_file(request.app.state.data_dir, file_id)
+    except (OSError, sqlite3.Error) as exc:
+        logger.exception("File deletion failed")
+        raise HTTPException(500, "删除失败，请稍后重试") from exc
+    if not deleted:
+        raise HTTPException(404, "文件不存在或已删除")
+    return {"id": file_id, "deleted": True}

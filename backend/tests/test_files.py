@@ -52,6 +52,25 @@ class FilesTest(unittest.TestCase):
             "/api/files", files={"file": (name, docx() if content is None else content)}
         )
 
+    def test_delete_removes_only_requested_file(self):
+        first = self.upload().json()
+        second = self.upload().json()
+        response = self.client.delete(f"/api/files/{first['id']}")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.client.get('/api/files').json()['total'], 1)
+        self.assertEqual(self.client.get(f"/api/files/{first['id']}/download").status_code, 404)
+        self.assertEqual(self.client.get(f"/api/files/{second['id']}/download").status_code, 200)
+        self.assertFalse((Path(self.temp.name) / 'uploads' / f"{first['id']}.docx").exists())
+        self.assertEqual(self.client.delete(f"/api/files/{first['id']}").status_code, 404)
+        self.assertEqual(self.client.delete('/api/files/invalid').status_code, 404)
+
+    def test_delete_failure_keeps_record_and_file(self):
+        file = self.upload().json()
+        with patch('pathlib.Path.unlink', side_effect=PermissionError('test')), self.assertLogs('app.files', level='ERROR'):
+            self.assertEqual(self.client.delete(f"/api/files/{file['id']}").status_code, 500)
+        self.assertEqual(self.client.get('/api/files').json()['total'], 1)
+        self.assertEqual(self.client.get(f"/api/files/{file['id']}/download").status_code, 200)
+
     def test_roundtrip_same_name_and_restart(self):
         original = docx()
         first = self.upload(original).json()

@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from . import database
 from .files import router
+from .documents import router as documents_router
 from .storage import data_directory
 
 
@@ -20,6 +21,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Office Agent API", version="0.2.0", lifespan=lifespan)
 app.include_router(router)
+app.include_router(documents_router)
 
 
 class HealthResponse(BaseModel):

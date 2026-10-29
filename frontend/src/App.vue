@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { nextTick, onMounted, ref } from "vue";
+import DocumentEditor from "./components/DocumentEditor.vue";
 import Composer from "./components/Composer.vue";
 import FileDrawer from "./components/FileDrawer.vue";
 import { listFiles, uploadFile, type FileInfo } from "./api";
@@ -12,6 +13,40 @@ const error = ref(""),
   message = ref(""),
   listError = ref("");
 const drawerButton = ref<HTMLButtonElement>();
+const activeFile = ref<FileInfo | null>(null);
+const selectedFile = ref<FileInfo | null>(null);
+const draft = ref("");
+const composer = ref<InstanceType<typeof Composer>>();
+async function selectFile(file: FileInfo) {
+  drawer.value = false;
+  activeFile.value = null;
+  selectedFile.value = file;
+  error.value = "";
+  message.value = "";
+  await nextTick();
+  composer.value?.focus();
+}
+async function viewFile(file: FileInfo) {
+  drawer.value = false;
+  activeFile.value = file;
+}
+async function returnToComposer() {
+  activeFile.value = null;
+  await nextTick();
+  composer.value?.focus();
+}
+function clearSelection() {
+  selectedFile.value = null;
+  message.value = "";
+}
+function fileDeleted(file: FileInfo) {
+  files.value = files.value.filter(item => item.id !== file.id);
+  total.value = Math.max(0, total.value - 1);
+  if (selectedFile.value?.id === file.id) clearSelection();
+  if (activeFile.value?.id === file.id) activeFile.value = null;
+  message.value = `已删除：${file.name}`;
+  void load();
+}
 let generation = 0;
 async function load(more = false) {
   if (more && loading.value) return;
@@ -53,10 +88,12 @@ async function upload(file: File) {
   try {
     const result = await uploadFile(file);
     ++generation; // Ignore older list responses while publishing this successful upload.
+    loading.value = false;
     files.value = [result, ...files.value];
     total.value++;
     message.value = `已上传：${result.name}`;
-    openDrawer();
+    await selectFile(result);
+    message.value = `已上传：${result.name}`;
   } catch (cause) {
     error.value = (cause as Error).message;
     message.value = "";
@@ -67,11 +104,11 @@ async function upload(file: File) {
 onMounted(() => void load());
 </script>
 <template>
-  <div class="layout" :inert="drawer">
+  <div class="layout" :class="{ 'viewer-layout': activeFile }" :inert="drawer">
     <header>
       <a class="brand" href="/">Office<span>Agent</span></a>
       <div class="header-actions">
-        <span class="version">v0.2.0 · 文件上传与抽屉</span
+        <span class="version">v0.2.0</span
         ><button
           ref="drawerButton"
           class="files-toggle"
@@ -94,8 +131,13 @@ onMounted(() => void load());
       </div>
     </header>
     <main>
-      <h1>让文档修改，<br /><span>像对话一样简单。</span></h1>
+      <template v-if="!activeFile">
+      <h1>让文档修改，<br /><span>像对话一样简单</span></h1>
       <Composer
+        ref="composer"
+        v-model="draft"
+        :file="selectedFile"
+        @clear="clearSelection"
         :busy="uploading"
         :message="message"
         :error="error"
@@ -105,8 +147,11 @@ onMounted(() => void load());
           message = '';
         "
       />
+      </template>
+      <DocumentEditor v-else :key="activeFile.id" :file="activeFile"
+        @close="returnToComposer" />
     </main>
-    <footer>一步一步，从 Web 应用到 AI Agent。</footer>
+    <footer>AI Office Agent</footer>
   </div>
   <FileDrawer
     v-if="drawer"
@@ -114,6 +159,9 @@ onMounted(() => void load());
     :total="total"
     :loading="loading"
     :error="listError"
+    @edit="selectFile"
+    @view="viewFile"
+    @deleted="fileDeleted"
     @close="closeDrawer"
     @more="load(true)"
     @retry="load()"

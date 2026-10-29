@@ -1,11 +1,15 @@
 <script setup lang="ts">
 import { ref } from "vue";
-const props = defineProps<{ busy: boolean; message: string; error: string }>();
+import type { FileInfo } from "../api";
+const props = defineProps<{ busy: boolean; message: string; error: string; file?: FileInfo | null }>();
 const emit = defineEmits<{
+  clear: [];
   upload: [file: File];
   invalid: [message: string];
 }>();
-const draft = ref("");
+const draft = defineModel<string>({ default: "" });
+const textarea = ref<HTMLTextAreaElement>();
+defineExpose({ focus: () => textarea.value?.focus() });
 const picker = ref<HTMLInputElement>();
 const dragDepth = ref(0);
 function resize(event: Event) {
@@ -45,7 +49,13 @@ function dropped(event: DragEvent) {
     @dragover.prevent
     @drop.prevent="dropped"
   >
+    <div v-if="file" class="selected-file">
+      <span class="selected-file-icon" aria-hidden="true">W</span>
+      <span class="selected-file-name" :title="file.name">{{ file.name }}</span>
+      <button type="button" class="icon-button" aria-label="清除当前选中文件" title="取消选择，不删除已上传文件" :disabled="busy" @click="emit('clear')">×</button>
+    </div>
     <textarea
+      ref="textarea"
       v-model="draft"
       aria-label="输入文档修改要求"
       placeholder="想怎样修改文档？在这里写下你的想法…"
