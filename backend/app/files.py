@@ -114,9 +114,17 @@ def delete_file(request: Request, file_id: str):
         raise HTTPException(404, "文件不存在")
     try:
         deleted = database.delete_file(request.app.state.data_dir, file_id)
+    except database.ActiveTaskError as exc:
+        raise HTTPException(409, str(exc)) from exc
     except (OSError, sqlite3.Error) as exc:
         logger.exception("File deletion failed")
         raise HTTPException(500, "删除失败，请稍后重试") from exc
     if not deleted:
         raise HTTPException(404, "文件不存在或已删除")
     return {"id": file_id, "deleted": True}
+
+
+@router.get("/{file_id}/history")
+def history(request: Request, file_id: str, limit: int = Query(20, ge=1, le=100), before: str | None = Query(None, max_length=100)):
+    from .history import read
+    return read(request.app.state.data_dir, file_id, limit, before)

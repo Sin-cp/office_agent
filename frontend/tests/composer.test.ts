@@ -37,3 +37,52 @@ describe('composer', () => {
     expect(wrapper.get('textarea').element.value).toContain('保持格式')
   })
 })
+
+
+describe('composer keyboard sending', () => {
+  const selectedFile = { id: 'one', name: '测试.docx', size: 10, created_at: '2026-10-30' }
+  function ready(overrides = {}) {
+    return mount(Composer, { props: { busy: false, message: '', error: '', file: selectedFile, modelValue: '修改正文', ...overrides } })
+  }
+  function press(wrapper: ReturnType<typeof ready>, options: KeyboardEventInit = {}) {
+    const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true, ...options })
+    wrapper.get('textarea').element.dispatchEvent(event)
+    return event
+  }
+  it('sends on Enter and prevents a newline', () => {
+    const wrapper = ready()
+    expect(press(wrapper).defaultPrevented).toBe(true)
+    expect(wrapper.emitted('send')).toHaveLength(1)
+    wrapper.unmount()
+  })
+  it('leaves Shift+Enter to the native textarea newline behavior', () => {
+    const wrapper = ready()
+    expect(press(wrapper, { shiftKey: true }).defaultPrevented).toBe(false)
+    expect(wrapper.emitted('send')).toBeUndefined()
+    wrapper.unmount()
+  })
+  it('does not send when missing a file or prompt, disabled, busy, or holding Enter', () => {
+    for (const props of [{ file: undefined }, { modelValue: '  ' }, { busy: true }, { sendDisabled: true }]) {
+      const wrapper = ready(props)
+      press(wrapper)
+      expect(wrapper.emitted('send')).toBeUndefined()
+      wrapper.unmount()
+    }
+    const wrapper = ready()
+    press(wrapper, { repeat: true })
+    expect(wrapper.emitted('send')).toBeUndefined()
+    wrapper.unmount()
+  })
+  it('does not submit when Enter is used to confirm an IME candidate', async () => {
+    const wrapper = ready()
+    expect(press(wrapper, { isComposing: true }).defaultPrevented).toBe(false)
+    expect(press(wrapper, { keyCode: 229 }).defaultPrevented).toBe(false)
+    await wrapper.get('textarea').trigger('compositionstart')
+    expect(press(wrapper).defaultPrevented).toBe(false)
+    expect(wrapper.emitted('send')).toBeUndefined()
+    await wrapper.get('textarea').trigger('compositionend')
+    press(wrapper)
+    expect(wrapper.emitted('send')).toHaveLength(1)
+    wrapper.unmount()
+  })
+})

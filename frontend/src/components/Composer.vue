@@ -1,14 +1,27 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import type { FileInfo } from "../api";
-const props = defineProps<{ busy: boolean; message: string; error: string; file?: FileInfo | null }>();
+const props = defineProps<{ busy: boolean; sendDisabled?: boolean; conversation?: boolean; message: string; error: string; file?: FileInfo | null }>();
 const emit = defineEmits<{
   clear: [];
+  send: [];
   upload: [file: File];
   invalid: [message: string];
 }>();
 const draft = defineModel<string>({ default: "" });
 const textarea = ref<HTMLTextAreaElement>();
+const composing = ref(false);
+const canSend = computed(() => !props.busy && !props.sendDisabled && !!props.file && !!draft.value.trim());
+function send() {
+  if (canSend.value) emit("send");
+}
+function keydown(event: KeyboardEvent) {
+  // IME Enter confirms a candidate; keyCode 229 covers browsers that end
+  // composition before dispatching the confirmation keydown.
+  if (event.key !== "Enter" || event.shiftKey || composing.value || event.isComposing || event.keyCode === 229) return;
+  event.preventDefault();
+  if (!event.repeat) send();
+}
 defineExpose({ focus: () => textarea.value?.focus() });
 const picker = ref<HTMLInputElement>();
 const dragDepth = ref(0);
@@ -60,7 +73,13 @@ function dropped(event: DragEvent) {
       aria-label="输入文档修改要求"
       placeholder="想怎样修改文档？在这里写下你的想法…"
       rows="3"
+      :disabled="busy"
+      maxlength="2000"
       @input="resize"
+      @keydown="keydown"
+      @compositionstart="composing = true"
+      @compositionend="composing = false"
+      title="Enter 发送，Shift + Enter 换行"
     ></textarea>
     <div class="composer-toolbar">
       <input
@@ -93,14 +112,15 @@ function dropped(event: DragEvent) {
         </svg>
       </button>
       <span class="upload-hint">{{
-        busy ? "正在上传…" : "仅支持 .docx · 最大 10 MiB"
+        busy ? "正在处理…" : "仅支持 .docx · 最大 10 MiB"
       }}</span>
-      <span class="ai-hint">AI 编辑即将接入</span>
+      <span class="ai-hint">单次修改一个段落</span>
       <button
         class="send-button"
         type="button"
-        disabled
-        aria-label="发送（AI 编辑即将接入）"
+        :disabled="!canSend"
+        aria-label="发送修改要求"
+        @click="send"
       >
         <svg
           viewBox="0 0 24 24"
@@ -119,5 +139,5 @@ function dropped(event: DragEvent) {
   </section>
   <p v-if="error" class="feedback error" role="alert">{{ error }}</p>
   <p v-else-if="message" class="feedback" role="status">{{ message }}</p>
-  <p v-else class="composer-note">拖入 Word 文档，开始整理你的文件</p>
+  <p v-else class="composer-note">{{ conversation ? "修改将基于上方选中的版本继续，原文件会保留" : "拖入 Word 文档，开始整理你的文件" }}</p>
 </template>

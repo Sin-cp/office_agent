@@ -16,6 +16,10 @@ def connection(root: Path):
         db.close()
 
 
+class ActiveTaskError(Exception):
+    pass
+
+
 def initialize(root: Path):
     (root / "uploads").mkdir(parents=True, exist_ok=True)
     with connection(root) as db:
@@ -27,14 +31,28 @@ def initialize(root: Path):
         columns = {row[1] for row in db.execute("PRAGMA table_info(files)")}
         if "source_file_id" not in columns:
             db.execute("ALTER TABLE files ADD COLUMN source_file_id TEXT")
+        from .history import migrate
+        migrate(db)
+        from .projects import migrate as migrate_projects
+        migrate_projects(db)
 
 
 def insert(root: Path, record: dict):
     with connection(root) as db:
-        db.execute(
-            "INSERT INTO files (id, name, size, storage_key, created_at, source_file_id) VALUES (:id, :name, :size, :storage_key, :created_at, :source_file_id)",
-            {"source_file_id": None, **record},
-        )
+        insert_record(db, record)
+
+
+def insert_record(db, record):
+    from .history import register
+    if record.get('source_file_id') and not db.execute('SELECT 1 FROM files WHERE id=?', (record['source_file_id'],)).fetchone():
+        raise sqlite3.IntegrityError('Source file no longer exists')
+    db.execute(
+        "INSERT INTO files (id, name, size, storage_key, created_at, source_file_id) VALUES (:id, :name, :size, :storage_key, :created_at, :source_file_id)",
+        {"source_file_id": None, **record},
+    )
+    register(db, record)
+    from .projects import register as register_project
+    register_project(db, record)
 
 
 def list_files(root: Path, limit: int, offset: int):
@@ -61,6 +79,8 @@ def delete_file(root: Path, file_id: str):
     try:
         with connection(root) as db:
             db.execute("BEGIN IMMEDIATE")
+            if db.execute("SELECT 1 FROM tasks WHERE json_extract(payload, '$.status') IN ('queued','running','cancelling') LIMIT 1").fetchone():
+                raise ActiveTaskError('任务执行期间不能删除文件，请等待结束或停止后重试')
             row = db.execute("SELECT * FROM files WHERE id = ?", (file_id,)).fetchone()
             if row is None:
                 return False

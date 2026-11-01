@@ -28,8 +28,7 @@ class EditRequest(BaseModel):
         return value.replace('\r\n', '\n').replace('\r', '\n')
 
 
-def load(request, file_id):
-    root = request.app.state.data_dir
+def load_file(root, file_id):
     record = database.get(root, file_id)
     if not record:
         raise HTTPException(404, '文件不存在')
@@ -46,6 +45,10 @@ def load(request, file_id):
     return root, record, data, document, revision, items
 
 
+def load(request, file_id):
+    return load_file(request.app.state.data_dir, file_id)
+
+
 @router.get('/{file_id}/content')
 def content(request: Request, file_id: str):
     _, record, _, document, revision, items = load(request, file_id)
@@ -55,7 +58,16 @@ def content(request: Request, file_id: str):
 
 @router.post('/{file_id}/edits', response_model=FileInfo, status_code=201)
 def edit(request: Request, file_id: str, change: EditRequest):
-    root, record, data, document, revision, items = load(request, file_id)
+    return apply_edit(request.app.state.data_dir, file_id, change)
+
+
+def apply_edit(root, file_id, change):
+    prepared = prepare_edit(root, file_id, change)
+    return publish_edit(root, prepared)
+
+
+def prepare_edit(root, file_id, change, task=False):
+    root, record, data, document, revision, items = load_file(root, file_id)
     if change.revision != revision:
         raise HTTPException(409, '文档已变化，请重新读取后修改')
     selected = next((item for item in items if item['id'] == change.block_id), None)
@@ -68,7 +80,7 @@ def edit(request: Request, file_id: str, change: EditRequest):
     if change.new_text == selected['text']:
         raise HTTPException(400, '文字没有变化，无需生成新文件')
     new_id = str(uuid4())
-    temporary = root / 'uploads' / f'{new_id}.tmp'
+    temporary = root / 'uploads' / f"{'task-' if task else ''}{new_id}.tmp"
     destination = root / 'uploads' / f'{new_id}.docx'
     committed = False
     try:
@@ -80,16 +92,30 @@ def edit(request: Request, file_id: str, change: EditRequest):
         result = dict(id=new_id, name=record['name'][:-5][:220] + '_修改版.docx',
                       size=temporary.stat().st_size, storage_key=destination.name,
                       created_at=datetime.now(timezone.utc).isoformat(), source_file_id=file_id)
-        temporary.replace(destination)
-        database.insert(root, result)
         committed = True
-        return result
+        return temporary, destination, result
     except HTTPException:
         raise
     except Exception as exc:
         logger.exception('Document generation failed')
         raise HTTPException(500, '生成文件失败，请稍后重试') from exc
     finally:
-        temporary.unlink(missing_ok=True)
         if not committed:
+            temporary.unlink(missing_ok=True)
             destination.unlink(missing_ok=True)
+
+
+def publish_edit(root, prepared, persist=None):
+    temporary, destination, result = prepared
+    try:
+        temporary.replace(destination)
+        if persist is None:
+            database.insert(root, result)
+        else:
+            persist(result)
+        return result
+    except Exception as exc:
+        temporary.unlink(missing_ok=True)
+        destination.unlink(missing_ok=True)
+        logger.exception('Document publication failed')
+        raise HTTPException(500, '生成文件失败，请稍后重试') from exc

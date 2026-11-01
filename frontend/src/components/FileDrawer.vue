@@ -5,23 +5,24 @@ import "element-plus/theme-chalk/base.css";
 import "element-plus/theme-chalk/el-message-box.css";
 import "element-plus/theme-chalk/el-overlay.css";
 import "element-plus/theme-chalk/el-button.css";
-import { deleteFile, downloadUrl, formatSize, type FileInfo } from "../api";
-defineProps<{
-  files: FileInfo[];
+import { deleteProject, downloadUrl, formatSize, type ProjectInfo } from "../api";
+const props = defineProps<{
+  busy?: boolean;
+  projects: ProjectInfo[];
   total: number;
   loading: boolean;
   error: string;
 }>();
-const emit = defineEmits<{ deleted: [file: FileInfo]; close: []; more: []; retry: []; edit: [file: FileInfo]; view: [file: FileInfo] }>();
+const emit = defineEmits<{ deleted: [file: ProjectInfo]; close: []; more: []; retry: []; edit: [file: ProjectInfo]; view: [file: ProjectInfo] }>();
 const confirming = ref(false);
 const deleting = ref(false);
 const deleteError = ref("");
-async function remove(file: FileInfo) {
-  if (confirming.value || deleting.value) return;
+async function remove(file: ProjectInfo) {
+  if (props.busy || confirming.value || deleting.value) return;
   confirming.value = true;
   deleteError.value = "";
   try {
-    await ElMessageBox.confirm(`确定删除“${file.name}”吗？文件删除后无法恢复！`, "删除文件", {
+    await ElMessageBox.confirm(`确定删除项目“${file.name}”吗？源文件、全部修改版和对话历史将一并删除，无法恢复！`, "删除项目", {
       confirmButtonText: "确认删除", cancelButtonText: "取消", type: "warning",
       confirmButtonClass: "delete-confirm-button", closeOnClickModal: false,
       lockScroll: false,
@@ -33,7 +34,8 @@ async function remove(file: FileInfo) {
   }
   deleting.value = true;
   try {
-    await deleteFile(file.id);
+    if (props.busy) return;
+    await deleteProject(file.id);
     emit("deleted", file);
   } catch (cause) {
     deleteError.value = (cause as Error).message;
@@ -91,7 +93,7 @@ onBeforeUnmount(() => {
         <div class="drawer-heading">
           <div>
             <h2 id="drawer-title">文件管理</h2>
-            <p>共 {{ total }} 个文件</p>
+            <p>共 {{ total }} 个项目</p>
           </div>
           <button
             ref="closeButton"
@@ -103,31 +105,31 @@ onBeforeUnmount(() => {
           </button>
         </div>
         <div class="file-list" :aria-busy="loading">
-          <div v-if="!files.length && !loading && !error" class="empty">
+          <div v-if="!projects.length && !loading && !error" class="empty">
             <span class="empty-icon">▤</span><strong>还没有上传文件</strong>
             <p>通过输入框的附件按钮，<br />或拖入一份 DOCX 文档。</p>
           </div>
-          <article v-for="file in files" :key="file.id" class="file-card">
+          <article v-for="file in projects" :key="file.id" class="file-card">
             <div class="file-symbol" aria-hidden="true">W</div>
             <div class="file-details">
               <h3 :title="file.name">{{ file.name }}</h3>
               <p>
-                {{ formatSize(file.size) }} ·
-                {{ new Date(file.created_at).toLocaleString("zh-CN") }}
+                {{ file.size === null ? '大小未知' : formatSize(file.size) }} ·
+                {{ file.created_at ? new Date(file.created_at).toLocaleString('zh-CN') : '上传时间未知' }}
               </p>
-              <button class="text-button file-edit" @click="emit('view', file)">查看文件</button>
-              <button class="text-button file-edit" @click="emit('edit', file)">修改文件</button>
-              <small v-if="file.source_file_id">由已有文件生成</small>
-              <a :href="downloadUrl(file.id)" :aria-label="`下载 ${file.name}`"
-                >下载文件 <span aria-hidden="true">↓</span></a
+              <button class="text-button file-edit" :disabled="!file.source_available" @click="emit('view', file)">预览源文件</button>
+              <button class="text-button file-edit" :disabled="busy" @click="emit('edit', file)">修改文件</button>
+              <small v-if="!file.source_available">源文件不可用</small>
+              <a v-if="file.source_available && file.source_file_id" :href="downloadUrl(file.source_file_id)" :aria-label="`下载源文件 ${file.name}`"
+                >下载源文件 <span aria-hidden="true">↓</span></a
               >
             </div>
-            <button class="icon-button delete-file" :aria-label="`删除 ${file.name}`" title="删除文件" :disabled="confirming || deleting" @click="remove(file)">
+            <button class="icon-button delete-file" :aria-label="`删除项目 ${file.name}`" title="删除整个项目" :disabled="busy || confirming || deleting" @click="remove(file)">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 10v7m4-7v7" /></svg>
             </button>
           </article>
           <p v-if="deleteError" class="feedback error" role="alert">{{ deleteError }}</p>
-          <p v-if="deleting" role="status">正在删除文件…</p>
+          <p v-if="deleting" role="status">正在删除项目…</p>
           <p v-if="error" class="feedback error" role="alert">{{ error }}</p>
           <button
             v-if="error"
@@ -139,7 +141,7 @@ onBeforeUnmount(() => {
           </button>
           <p v-if="loading" class="list-status" role="status">正在加载文件…</p>
           <button
-            v-if="files.length < total && !error"
+            v-if="projects.length < total && !error"
             class="load-more"
             :disabled="loading"
             @click="emit('more')"

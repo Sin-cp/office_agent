@@ -438,3 +438,44 @@ main:has(.document-editor) { max-width: 1120px; }
 .document-preview iframe { display: block; border: 0; width: 100%; height: 100%; background: white; }
 .preview-status { padding: 36px; text-align: center; color: #78859a; }
 .preview-status.error { color: #c94040; }
+
+.task-progress { width: 100%; max-width: 740px; margin: 24px auto; padding: 24px; border: 1px solid #e1e6ee; border-radius: 18px; background: white; text-align: left; }
+.task-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.task-heading h2 { font-size: 20px; margin: 0; }
+.task-heading span, .task-filename { color: #687589; font-size: 14px; }
+.task-progress ol { list-style: none; padding: 0; }
+.task-progress li { display: flex; justify-content: space-between; padding: 9px 12px; color: #687589; border-radius: 8px; }
+.task-progress li.current { background: #f1f3ff; color: #4154c6; }
+.task-result { border-top: 1px solid #e1e6ee; margin-top: 18px; padding-top: 8px; overflow-wrap: anywhere; }
+.task-actions { display: flex; gap: 20px; align-items: center; margin-top: 20px; flex-wrap: wrap; }
+.task-actions a { color: #4154c6; }
+.change-text { white-space: pre-wrap; font-size: 14px; line-height: 1.7; }
+
+/* A file without history keeps the home layout. History occupies its own viewport. */
+.conversation-layout { height: 100dvh; min-height: 0; overflow: hidden; }
+.conversation-layout header { height: 76px; }
+.conversation-layout main { flex: 1; min-height: 0; max-width: 900px; margin: 0 auto; padding: 0; display: flex; flex-direction: column; }
+.conversation-layout footer { display: none; }
+.conversation-history { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding: 28px 12px 16px; }
+.conversation-turn { margin-bottom: 32px; }
+.user-message { width: fit-content; max-width: 85%; margin-left: auto; padding: 14px 20px; border-radius: 18px 18px 4px 18px; background: #eaf0ff; color: #25334b; overflow-wrap: anywhere; }
+.user-message p { white-space: pre-wrap; margin: 0px; line-height: 1.7; }
+.message-role { font-size: 12px; color: #6b7890; }
+.conversation-history .task-progress { max-width: 88%; margin: 12px 0 0; padding: 14px; }
+.conversation-history .task-heading h2 { font-size: 17px; }
+.composer-dock { flex-shrink: 0; }
+.conversation-layout .composer-dock { padding: 14px 12px 8px; background: #f5f7fb; border-top: 1px solid #e1e6ee; }
+.conversation-layout .composer { padding: 12px; border-radius: 18px; }
+.conversation-layout textarea { min-height: 56px; max-height: min(160px, 20dvh); }
+.conversation-layout .composer-toolbar { margin-top: 8px; }
+.conversation-layout .selected-file { margin-bottom: 10px; }
+.conversation-layout .composer-note { margin: 8px 0 0; font-size: 12px; }
+.history-status { color: #687589; padding: 10px 0; }
+.older-messages { display: block; margin: 0 auto 24px; }
+.deleted-result { color: #687589; font-size: 14px; }
+@media (max-width: 600px) {
+  .conversation-layout { padding: 0 12px; }
+  .conversation-history { padding: 16px 0; }
+  .conversation-history .task-progress { max-width: 100%; padding: 16px; }
+  .conversation-layout .composer-dock { padding: 10px 0; }
+}

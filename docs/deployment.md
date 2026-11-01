@@ -143,3 +143,9 @@ docker compose start
 ## 本次验证边界
 
 本地进行了 Compose 静态配置检查与前端构建。由于本地 Docker daemon 未运行，尚未完成 Docker 镜像构建、Nginx 运行和容器端到端验证；ECS 未执行任何部署操作。正式使用前按上述步骤完成验收。
+
+## DeepSeek 配置更新
+
+在服务器现有 `.env` 中补充 `DEEPSEEK_API_KEY`、`DEEPSEEK_MODEL=deepseek-flash`、`DEEPSEEK_BASE_URL=https://api.deepseek.com`。不要覆盖已有的数据目录配置，不将密钥传给前端。Compose 会显式传入后端容器；避免分享 `docker compose config` 的展开输出，其中可能包含密钥，检查配置使用 `--quiet`。
+
+备份数据后依次执行 `docker compose build backend`、`docker compose build web`、`docker compose up -d --wait --wait-timeout 120`。任务调度仅支持单进程后端，不配置多个 workers 或副本。更新会中断运行中的任务，请待任务完成或停止后部署。

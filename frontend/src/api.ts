@@ -1,4 +1,5 @@
 export interface FileInfo {
+  available?: boolean;
   source_file_id?: string | null;
   id: string;
   name: string;
@@ -9,6 +10,7 @@ export interface FileList {
   items: FileInfo[];
   total: number;
 }
+export class ApiError extends Error { constructor(message: string, public status: number) { super(message); } }
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
   let response: Response;
   try {
@@ -23,10 +25,10 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
   }
   if (!response.ok) {
     const body = await response.json().catch(() => null);
-    throw new Error(
+    throw new ApiError(
       typeof body?.detail === "string"
         ? body.detail
-        : `请求失败（${response.status}）`,
+        : `请求失败（${response.status}）`, response.status,
     );
   }
   return response.json();
@@ -61,3 +63,38 @@ export const editDocument = (id: string, change: {block_id: string; revision: st
 
 export const deleteFile = (id: string) =>
   request<{ id: string; deleted: boolean }>(`/api/files/${encodeURIComponent(id)}`, { method: 'DELETE' });
+
+export interface TaskState {
+  id: string; file: FileInfo; prompt: string;
+  status: 'queued' | 'running' | 'cancelling' | 'completed' | 'failed' | 'cancelled';
+  stage: number; steps: string[]; elapsed_seconds: number; error: string | null;
+  result: { file: FileInfo; position: number; summary: string; explanation: string; before: string; after: string } | null;
+}
+export const createTask = (file_id: string, prompt: string) => request<TaskState>('/api/tasks', {
+  method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({file_id, prompt}),
+});
+export const getTask = (id: string) => request<TaskState>(`/api/tasks/${encodeURIComponent(id)}`);
+export const cancelTask = (id: string) => request<TaskState>(`/api/tasks/${encodeURIComponent(id)}/cancel`, {method: 'POST'});
+
+export interface FileHistory {
+  history_id: string;
+  items: TaskState[];
+  total: number;
+  next_cursor: string | null;
+  current_file: FileInfo | null;
+  active_task: TaskState | null;
+}
+export const getHistory = (id: string, before?: string) => request<FileHistory>(
+  `/api/files/${encodeURIComponent(id)}/history?limit=20${before ? `&before=${encodeURIComponent(before)}` : ''}`,
+);
+
+export interface ProjectInfo {
+  id: string;
+  source_file_id: string | null;
+  name: string;
+  size: number | null;
+  created_at: string | null;
+  source_available: boolean;
+}
+export const listProjects = (offset = 0) => request<{items: ProjectInfo[]; total: number}>(`/api/projects?limit=20&offset=${offset}`);
+export const deleteProject = (id: string) => request<{id: string; deleted: boolean}>(`/api/projects/${encodeURIComponent(id)}`, {method: 'DELETE'});
