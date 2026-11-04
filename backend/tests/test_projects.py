@@ -28,7 +28,7 @@ class ProjectTests(unittest.TestCase):
         project = self.listing()['items'][0]
         self.assertEqual(self.listing()['total'], 1)
         self.assertEqual(project['source_file_id'], source['id'])
-        self.assertEqual(project['name'], source['name'])
+        self.assertEqual(project['name'], '修改正文')
         self.assertEqual(project['created_at'], source['created_at'])
         self.assertEqual(self.history(project)['current_file']['id'], latest['id'])
         self.assertEqual(self.client.get(f"/api/files/{source['id']}/download").content, content)
@@ -45,17 +45,19 @@ class ProjectTests(unittest.TestCase):
         self.client.delete(f"/api/files/{source['id']}")
         root = Path(self.temp.name)
         with database.connection(root) as db:
+            db.execute('DROP TABLE project_sources')
             db.execute('DROP TABLE projects')
         database.initialize(root)
         project = self.listing()['items'][0]
         self.assertFalse(project['source_available'])
-        self.assertEqual(project['name'], source['name'])
+        self.assertEqual(project['name'], '修改正文')
         self.assertEqual(project['source_file_id'], source['id'])
         self.assertEqual(self.history(project)['current_file']['id'], version['id'])
         database.initialize(root)
         self.assertEqual(self.listing()['total'], 1)
         with database.connection(root) as db:
             db.execute('DELETE FROM tasks')
+            db.execute('DROP TABLE project_sources')
             db.execute('DROP TABLE projects')
             db.execute('DROP TABLE file_history')
         database.initialize(root)
@@ -137,3 +139,37 @@ class ProjectTests(unittest.TestCase):
         self.assertEqual(self.client.delete(f"/api/projects/{source['id']}").status_code, 409)
         with database.connection(root) as db:
             db.execute("DELETE FROM tasks WHERE id='active'")
+
+
+    def test_delete_source_preserves_chat_outputs_and_stays_deleted_on_restart(self):
+        source = self.upload(example()).json()
+        output = self.run_task(source)['result']['file']
+        project_id = source['id']
+        other = self.client.post(f'/api/files?project_id={project_id}', files={'file': ('other.docx', example())}).json()
+        before = self.client.get(f'/api/projects/{project_id}/messages').json()
+        endpoint = f"/api/projects/{project_id}/files/{source['id']}"
+        self.assertEqual(self.client.delete(endpoint).status_code, 200)
+        self.assertEqual(self.client.get(f"/api/files/{source['id']}/download").status_code, 404)
+        self.assertEqual(self.client.get(f"/api/files/{output['id']}/download").status_code, 200)
+        self.assertEqual(self.client.get(f'/api/projects/{project_id}/messages').json(), before)
+        database.initialize(Path(self.temp.name))
+        sources = self.client.get(f'/api/projects/{project_id}/files').json()['items']
+        self.assertEqual([f['id'] for f in sources], [other['id']])
+        self.assertEqual(self.client.delete(endpoint).status_code, 404)
+        self.assertEqual(self.client.delete(f"/api/projects/{project_id}/files/{other['id']}").status_code, 200)
+        self.assertEqual(self.listing()['items'][0]['file_count'], 0)
+        self.assertEqual(self.listing()['total'], 1)
+        self.assertEqual(self.client.delete(f'/api/projects/{project_id}').status_code, 200)
+        self.assertEqual(self.client.get(f"/api/files/{output['id']}/download").status_code, 404)
+
+    def test_delete_source_failure_rolls_back_and_checks_project(self):
+        source = self.upload(example()).json()
+        endpoint = f"/api/projects/{source['id']}/files/{source['id']}"
+        self.assertEqual(self.client.delete(f"/api/projects/other/files/{source['id']}").status_code, 404)
+        with patch.object(Path, 'unlink', side_effect=OSError('disk error')):
+            self.assertEqual(self.client.delete(endpoint).status_code, 500)
+        self.assertEqual(self.listing()['items'][0]['file_count'], 1)
+        self.assertEqual(self.client.get(f"/api/files/{source['id']}/download").status_code, 200)
+        with database.connection(Path(self.temp.name)) as db:
+            db.execute("INSERT INTO tasks(id,payload) VALUES (?,?)", ('busy', json.dumps({'status':'running'})))
+        self.assertEqual(self.client.delete(endpoint).status_code, 409)

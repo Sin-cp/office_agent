@@ -1,17 +1,18 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import type { FileInfo } from "../api";
-const props = defineProps<{ busy: boolean; sendDisabled?: boolean; conversation?: boolean; message: string; error: string; file?: FileInfo | null }>();
+const props = defineProps<{ busy: boolean; webEnabled?: boolean; sendDisabled?: boolean; conversation?: boolean; message: string; error: string; file?: FileInfo | null; files?: FileInfo[] }>();
 const emit = defineEmits<{
-  clear: [];
+  'update:webEnabled': [value: boolean];
+  clear: [id: string];
   send: [];
-  upload: [file: File];
+  upload: [files: File[]];
   invalid: [message: string];
 }>();
 const draft = defineModel<string>({ default: "" });
 const textarea = ref<HTMLTextAreaElement>();
 const composing = ref(false);
-const canSend = computed(() => !props.busy && !props.sendDisabled && !!props.file && !!draft.value.trim());
+const canSend = computed(() => !props.busy && !props.sendDisabled && !!draft.value.trim());
 function send() {
   if (canSend.value) emit("send");
 }
@@ -32,15 +33,14 @@ function resize(event: Event) {
 }
 function select(files: FileList | null) {
   if (props.busy || !files?.length) return;
-  if (files.length !== 1)
-    return emit("invalid", "每次只能上传一个文件，请重新选择。");
-  const file = files[0]!;
-  if (!file.name.toLowerCase().endsWith(".docx"))
-    return emit("invalid", "目前仅支持 .docx 文件。");
-  if (file.size === 0) return emit("invalid", "不能上传空文件。");
-  if (file.size > 10 * 1024 * 1024)
-    return emit("invalid", "文件不能超过 10 MiB。");
-  emit("upload", file);
+  const selected = Array.from(files);
+  if (selected.length > 20) return emit('invalid', '每次最多选择 20 份文件。');
+  for (const file of selected) {
+    if (!file.name.toLowerCase().endsWith('.docx')) return emit('invalid', '目前仅支持 .docx 文件。');
+    if (file.size === 0) return emit('invalid', '不能上传空文件。');
+    if (file.size > 10 * 1024 * 1024) return emit('invalid', '文件不能超过 10 MiB。');
+  }
+  emit('upload', selected);
 }
 function picked(event: Event) {
   const input = event.target as HTMLInputElement;
@@ -62,16 +62,16 @@ function dropped(event: DragEvent) {
     @dragover.prevent
     @drop.prevent="dropped"
   >
-    <div v-if="file" class="selected-file">
+    <div v-for="file in (files || (file ? [file] : []))" :key="file.id" class="selected-file">
       <span class="selected-file-icon" aria-hidden="true">W</span>
       <span class="selected-file-name" :title="file.name">{{ file.name }}</span>
-      <button type="button" class="icon-button" aria-label="清除当前选中文件" title="取消选择，不删除已上传文件" :disabled="busy" @click="emit('clear')">×</button>
+      <button type="button" class="icon-button" aria-label="清除当前选中文件" title="取消选择，不删除已上传文件" :disabled="busy" @click="emit('clear', file.id)">×</button>
     </div>
     <textarea
       ref="textarea"
       v-model="draft"
-      aria-label="输入文档修改要求"
-      placeholder="想怎样修改文档？在这里写下你的想法…"
+      aria-label="输入文档问题或修改要求"
+      placeholder="聊点什么，或上传文件进行总结、提问和修改…"
       rows="3"
       :disabled="busy"
       maxlength="2000"
@@ -86,6 +86,7 @@ function dropped(event: DragEvent) {
         ref="picker"
         class="visually-hidden"
         type="file"
+        multiple
         accept=".docx"
         tabindex="-1"
         aria-label="选择 DOCX 文件"
@@ -112,14 +113,19 @@ function dropped(event: DragEvent) {
         </svg>
       </button>
       <span class="upload-hint">{{
-        busy ? "正在处理…" : "仅支持 .docx · 最大 10 MiB"
+        busy ? "正在处理…" : "支持多份 .docx · 每份最大 10 MiB"
       }}</span>
-      <span class="ai-hint">单次修改一个段落</span>
+      <button type="button" class="web-toggle" role="switch" aria-label="联网" :aria-checked="webEnabled !== false"
+        :disabled="busy" :title="webEnabled !== false ? '需要实时信息时自动搜索，也可读取网页链接' : '联网已关闭，本轮不会搜索或读取网页'"
+        @click="emit('update:webEnabled', webEnabled === false)">
+        <span aria-hidden="true">◎</span> 联网
+      </button>
+      <span class="ai-hint"></span>
       <button
         class="send-button"
         type="button"
         :disabled="!canSend"
-        aria-label="发送修改要求"
+        aria-label="发送处理要求"
         @click="send"
       >
         <svg
@@ -139,5 +145,5 @@ function dropped(event: DragEvent) {
   </section>
   <p v-if="error" class="feedback error" role="alert">{{ error }}</p>
   <p v-else-if="message" class="feedback" role="status">{{ message }}</p>
-  <p v-else class="composer-note">{{ conversation ? "修改将基于上方选中的版本继续，原文件会保留" : "拖入 Word 文档，开始整理你的文件" }}</p>
+  <p v-else class="composer-note">{{ conversation ? "可直接聊天；仅处理本轮选中的附件" : "直接发送开始聊天，也可拖入多份 Word 文档" }}</p>
 </template>

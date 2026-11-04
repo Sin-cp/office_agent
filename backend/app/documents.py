@@ -52,8 +52,10 @@ def load(request, file_id):
 @router.get('/{file_id}/content')
 def content(request: Request, file_id: str):
     _, record, _, document, revision, items = load(request, file_id)
+    from . import operations
+    ordered, _ = operations.inventory(document, file_id)
     return dict(file=FileInfo(**record), revision=revision, blocks=items,
-                table_count=len(document.tables))
+                ordered_blocks=ordered, coverage=operations.coverage(document), table_count=len(document.tables))
 
 
 @router.post('/{file_id}/edits', response_model=FileInfo, status_code=201)
@@ -119,3 +121,32 @@ def publish_edit(root, prepared, persist=None):
         destination.unlink(missing_ok=True)
         logger.exception('Document publication failed')
         raise HTTPException(500, '生成文件失败，请稍后重试') from exc
+
+
+def prepare_batch(root, file_id, revision, operations):
+    from . import operations as engine
+    root, record, data, document, actual, _ = load_file(root, file_id)
+    if actual != revision:
+        raise HTTPException(409, '文档已变化，请重新读取后修改')
+    identity = str(uuid4())
+    temporary = root / 'uploads' / f'task-{identity}.tmp'
+    destination = root / 'uploads' / f'{identity}.docx'
+    try:
+        changes = engine.apply(document, file_id, operations)
+        engine.write(data, document, temporary)
+        if temporary.read_bytes() == data:
+            raise HTTPException(400, '文字没有变化，无需生成新文件')
+        validate_docx(temporary)
+        # Parse generated OOXML before publishing, not just ZIP structure.
+        service.read_document(temporary)
+        if temporary.stat().st_size > MAX_BYTES:
+            raise HTTPException(413, '生成文件超过 10 MiB 限制')
+        record = dict(id=identity, name=record['name'][:-5][:220] + '_修改版.docx',
+                      size=temporary.stat().st_size, storage_key=destination.name,
+                      created_at=datetime.now(timezone.utc).isoformat(), source_file_id=file_id)
+        return (temporary, destination, record), changes
+    except Exception as exc:
+        temporary.unlink(missing_ok=True)
+        if isinstance(exc, ValueError):
+            raise HTTPException(422, str(exc)) from exc
+        raise

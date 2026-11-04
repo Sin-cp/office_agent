@@ -145,12 +145,12 @@ class ModelTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_success_context_limit_and_timeout(self):
         import httpx2 as httpx
-        content = {'choices':[{'finish_reason':'stop','message':{'content':json.dumps(dict(status='edit', block_id='p:1', new_text='新', explanation='润色'))}}]}
+        content = {'choices':[{'finish_reason':'stop','message':{'content':json.dumps(dict(kind='answer', text='总结', operations=[], citations=[]))}}]}
         with patch.dict(os.environ, {'DEEPSEEK_API_KEY':'test-only'}), patch('app.model.httpx.AsyncClient') as client:
             post = AsyncMock(return_value=httpx.Response(200,json=content))
             client.return_value.__aenter__.return_value.post = post
-            self.assertEqual((await model.suggest('修改', [])).new_text, '新')
-            with self.assertRaisesRegex(model.ModelError, '40,000'):
+            self.assertEqual((await model.suggest('总结', [])).text, '总结')
+            with self.assertRaisesRegex(model.ModelError, '分块预算'):
                 await model.suggest('修改', ['x'*40001])
             self.assertEqual(post.await_count, 1)
             post.side_effect = httpx.ReadTimeout('timeout')

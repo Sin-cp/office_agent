@@ -4,20 +4,22 @@ import TaskProgress from './components/TaskProgress.vue';
 import DocumentEditor from './components/DocumentEditor.vue';
 import Composer from './components/Composer.vue';
 import FileDrawer from './components/FileDrawer.vue';
-import { listProjects, uploadFile, type FileInfo, type ProjectInfo } from './api';
+import SourceFilesDialog from './components/SourceFilesDialog.vue';
+import { listProjects, uploadFile, type FileInfo, type ProjectInfo, type SourceFile } from './api';
 import { useDocumentHistory } from './useDocumentHistory';
 const projects = ref<ProjectInfo[]>([]), total = ref(0), drawer = ref(false), loading = ref(false), uploading = ref(false);
 const error = ref(''), message = ref(''), listError = ref('');
 const drawerButton = ref<HTMLButtonElement>();
 const activeFile = ref<FileInfo | null>(null);
 const previewProjectId = ref<string | null>(null);
+const sourceProjectId = ref<string | null>(null);
 const composer = ref<InstanceType<typeof Composer>>();
-const { projectId, selected: selectedFile, records, draft, known, historyLoading, historyError, stopping, progressError, sendError,
+const { webEnabled, setWebEnabled, projectId, selected: selectedFile, sourceCount, attachments, ensureProject, attach, detach, records, draft, known, historyLoading, historyError, stopping, progressError, sendError,
   olderLoading, olderError, cursor, busy: taskBusy, conversation, scrollArea, select, retry, older, clear, send, stop, restore, projectDeleted } = useDocumentHistory(() => void load());
 async function selectProject(project: ProjectInfo) {
   if (taskBusy.value || uploading.value) return;
   drawer.value = false; activeFile.value = null; error.value = ''; message.value = '';
-  await select(project.id, !selectedFile.value);
+  await select(project.id);
   await nextTick(); composer.value?.focus();
 }
 function clearSelection() {
@@ -26,12 +28,22 @@ function clearSelection() {
 }
 function viewFile(file: FileInfo) { drawer.value = false; activeFile.value = file; previewProjectId.value = projectId.value; }
 function viewProject(project: ProjectInfo) {
-  if (!project.source_available || !project.source_file_id) return;
-  drawer.value = false;
-  previewProjectId.value = project.id;
-  activeFile.value = { id: project.source_file_id, name: project.name, size: project.size ?? 0, created_at: project.created_at ?? '' };
+  drawer.value = false; sourceProjectId.value = project.id;
 }
 async function returnToComposer() { activeFile.value = null; await nextTick(); composer.value?.focus(); }
+function sourceRemoved(file: SourceFile) {
+  if (sourceProjectId.value === projectId.value) {
+    if (file.current_file) detach(file.current_file.id);
+    detach(file.id);
+    sourceCount.value = Math.max(0, sourceCount.value - 1);
+    for (const record of records.value) {
+      const result = record.result;
+      if (result?.file?.id === file.id) result.file.available = false;
+      for (const output of result?.outputs || []) if (output.file.id === file.id) output.file.available = false;
+    }
+  }
+  void load();
+}
 function projectRemoved(project: ProjectInfo) {
   const cleared = projectDeleted(project.id);
   if (previewProjectId.value === project.id || cleared) activeFile.value = null;
@@ -67,18 +79,21 @@ async function load(more = false) {
 
 function openDrawer() { drawer.value = true; void load(); }
 async function closeDrawer() { drawer.value = false; await nextTick(); drawerButton.value?.focus(); }
-async function upload(file: File) {
+async function upload(files: File[]) {
   if (uploading.value || taskBusy.value || historyLoading.value) return;
-  uploading.value = true; error.value = ''; message.value = `正在上传 ${file.name}…`;
+  uploading.value = true; error.value = '';
   try {
-    const result = await uploadFile(file);
-    void load();
-    activeFile.value = null;
-    await select(result, !selectedFile.value);
-    message.value = '';
+    const id = await ensureProject();
+    for (const file of files) {
+      message.value = `正在上传 ${file.name}…`;
+      try { attach(await uploadFile(file, id)); sourceCount.value++; }
+      catch (cause) { error.value += `${file.name}：${(cause as Error).message} `; }
+    }
+    void load(); message.value = '';
   } catch (cause) { error.value = (cause as Error).message; message.value = ''; }
   finally { uploading.value = false; }
 }
+
 onMounted(() => { void load(); void restore(); });
 </script>
 
@@ -87,11 +102,11 @@ onMounted(() => { void load(); void restore(); });
     <header>
       <a class="brand" href="/">Office<span>Agent</span></a>
       <div class="header-actions">
-        <span class="version">v0.3.0</span
+        <button class="text-button" :disabled="taskBusy || uploading || historyLoading" @click="clearSelection">新建对话</button><span class="version">v0.4.0</span
         ><button
           ref="drawerButton"
           class="files-toggle"
-          aria-label="打开已上传文件"
+          aria-label="打开项目管理"
           aria-haspopup="dialog"
           :aria-expanded="drawer"
           @click="openDrawer"
@@ -111,7 +126,7 @@ onMounted(() => { void load(); void restore(); });
     </header>
     <main>
       <template v-if="!activeFile">
-      <div v-if="conversation" ref="scrollArea" class="conversation-history" aria-label="文件修改历史">
+      <div v-if="conversation" ref="scrollArea" class="conversation-history" aria-label="文档对话历史">
         <button v-if="cursor" class="text-button older-messages" :disabled="olderLoading" @click="older">{{ olderLoading ? '正在加载…' : '加载更早记录' }}</button>
         <p v-if="olderError" role="alert" class="feedback error">{{ olderError }}</p>
         <article v-for="record in records" :key="record.id" class="conversation-turn">
@@ -119,15 +134,15 @@ onMounted(() => { void load(); void restore(); });
           <TaskProgress :task="record" :stopping="stopping" @stop="stop" @view="viewFile" />
         </article>
       </div>
-      <h1 v-else-if="!historyLoading && !historyError && (!selectedFile || known)">让文档修改，<br /><span>像对话一样简单</span></h1>
+      <h1 v-else-if="!historyLoading && !historyError && (!selectedFile || known)">让文档处理，<br /><span>像对话一样简单</span></h1>
       <div class="composer-dock">
-        <p v-if="conversation && !selectedFile" class="history-status">此历史已没有可用文件。<button class="text-button" @click="clearSelection">返回首页</button></p>
+        <button v-if="projectId && sourceCount" class="text-button" @click="sourceProjectId = projectId">项目文件 / 选择本轮附件</button>
         <p v-if="historyLoading" role="status" class="history-status">正在加载文件历史…</p>
         <div v-if="historyError" class="history-status"><p class="feedback error" role="alert">{{ historyError }}</p><button class="text-button" @click="retry">重新加载历史</button></div>
         <div v-if="progressError" class="history-status"><p class="feedback error" role="alert">{{ progressError }}</p><button v-if="progressError.includes('任务不存在')" class="text-button" @click="retry">重新加载历史</button></div>
-        <Composer ref="composer" v-model="draft" :file="selectedFile" :conversation="conversation"
-          :busy="uploading || taskBusy || historyLoading" :send-disabled="!known || !!historyError"
-          :message="message" :error="error || sendError" @clear="clearSelection" @send="send"
+        <Composer ref="composer" v-model="draft" :web-enabled="webEnabled" @update:web-enabled="setWebEnabled" :files="attachments" :conversation="conversation"
+          :busy="uploading || taskBusy || historyLoading" :send-disabled="!!historyError"
+          :message="message" :error="error || sendError" @clear="detach" @send="send"
           @upload="upload" @invalid="error = $event; message = ''" />
       </div>
       </template>
@@ -146,8 +161,10 @@ onMounted(() => { void load(); void restore(); });
     @edit="selectProject"
     @view="viewProject"
     @deleted="projectRemoved"
+    @renamed="load()"
     @close="closeDrawer"
     @more="load(true)"
     @retry="load()"
   />
+  <SourceFilesDialog v-if="sourceProjectId" :project-id="sourceProjectId" :selectable="sourceProjectId === projectId" :selected-ids="attachments.map(f => f.id)" :busy="taskBusy || uploading" @close="sourceProjectId = null" @select="attach" @deselect="detach" @deleted="sourceRemoved" />
 </template>

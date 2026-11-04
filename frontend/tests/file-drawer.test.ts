@@ -2,11 +2,11 @@
 import { mount, flushPromises } from '@vue/test-utils';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { ElMessageBox } from 'element-plus';
-import { deleteProject } from '../src/api';
+import { deleteProject, renameProject } from '../src/api';
 import FileDrawer from '../src/components/FileDrawer.vue';
-vi.mock('element-plus', () => ({ ElMessageBox: { confirm: vi.fn() } }));
-vi.mock('../src/api', () => ({ deleteProject: vi.fn(), downloadUrl: () => '/download', formatSize: () => '1 KB' }));
-const file = { id: 'one', source_file_id: 'one', source_available: true, name: '测试.docx', size: 10, created_at: '2026-10-29' };
+vi.mock('element-plus', () => ({ ElMessageBox: { confirm: vi.fn(), prompt: vi.fn() } }));
+vi.mock('../src/api', () => ({ deleteProject: vi.fn(), renameProject: vi.fn(), downloadUrl: () => '/download', formatSize: () => '1 KB' }));
+const file = { id: 'one', file_count: 1, source_file_id: 'one', source_available: true, name: '测试.docx', size: 10, created_at: '2026-10-29' };
 const setup = () => mount(FileDrawer, { props: { projects: [file], total: 1, loading: false, error: '' }, global: { stubs: { teleport: true } } });
 beforeEach(() => vi.clearAllMocks());
 it('does not delete on cancel', async () => {
@@ -26,14 +26,24 @@ it('keeps the file and displays API failure', async () => {
   const wrapper = setup(); await wrapper.get('.delete-file').trigger('click'); await flushPromises();
   expect(wrapper.get('[role=alert]').text()).toBe('删除失败'); expect(wrapper.emitted('deleted')).toBeUndefined(); wrapper.unmount();
 });
-it('uses only the source download and disables missing source preview', async () => {
+it('shows source list and continue chat without direct download; hides file controls for chat', async () => {
   const wrapper = setup();
-  expect(wrapper.text()).toContain('下载源文件');
-  await wrapper.setProps({ projects: [{...file, source_available: false}] });
-  expect(wrapper.text()).toContain('源文件不可用');
+  expect(wrapper.text()).toContain('项目管理');
+  expect(wrapper.text()).toContain('项目文件');
+  expect(wrapper.text()).toContain('继续聊天');
   expect(wrapper.find('a').exists()).toBe(false);
-  expect(wrapper.findAll('.file-edit')[0]!.attributes('disabled')).toBeDefined();
-  expect(wrapper.findAll('.file-edit')[1]!.attributes('disabled')).toBeUndefined();
+  await wrapper.setProps({projects:[{...file,file_count:0,source_available:false}]});
+  expect(wrapper.text()).not.toContain('项目文件');
+  expect(wrapper.text()).toContain('继续聊天');
+  wrapper.unmount();
+});
+it('renames a project and refreshes only after save', async () => {
+  vi.mocked(ElMessageBox.prompt).mockResolvedValue({value:'新的标题',action:'confirm'});
+  vi.mocked(renameProject).mockResolvedValue({id:'one',name:'新的标题'});
+  const wrapper = setup();
+  await wrapper.get('.rename-project').trigger('click'); await flushPromises();
+  expect(renameProject).toHaveBeenCalledWith('one','新的标题');
+  expect(wrapper.emitted('renamed')).toHaveLength(1);
   wrapper.unmount();
 });
 it('blocks deletion while execution is active', async () => {

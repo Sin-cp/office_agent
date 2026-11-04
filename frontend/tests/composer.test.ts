@@ -15,17 +15,17 @@ describe('composer', () => {
     expect(wrapper.find('.drop-overlay').exists()).toBe(true)
     const selected = file()
     await wrapper.get('section').trigger('drop', { dataTransfer: { files: [selected] } })
-    expect(wrapper.emitted('upload')).toEqual([[selected]])
+    expect(wrapper.emitted('upload')).toEqual([[[selected]]])
     expect(wrapper.find('.drop-overlay').exists()).toBe(false)
   })
-  it('rejects multiple files, empty files, wrong extensions and excessive size', async () => {
+  it('rejects empty files, wrong extensions and excessive size', async () => {
     const wrapper = setup()
     const large = file()
     Object.defineProperty(large, 'size', { value: 10 * 1024 * 1024 + 1 })
-    for (const files of [[file(), file()], [new File([], 'empty.docx')], [new File(['x'], 'text.txt')], [large]]) {
+    for (const files of [[new File([], 'empty.docx')], [new File(['x'], 'text.txt')], [large]]) {
       await wrapper.get('section').trigger('drop', { dataTransfer: { files } })
     }
-    expect(wrapper.emitted('invalid')).toHaveLength(4)
+    expect(wrapper.emitted('invalid')).toHaveLength(3)
     expect(wrapper.emitted('upload')).toBeUndefined()
   })
   it('does not upload again while busy and never sends draft text', async () => {
@@ -61,8 +61,8 @@ describe('composer keyboard sending', () => {
     expect(wrapper.emitted('send')).toBeUndefined()
     wrapper.unmount()
   })
-  it('does not send when missing a file or prompt, disabled, busy, or holding Enter', () => {
-    for (const props of [{ file: undefined }, { modelValue: '  ' }, { busy: true }, { sendDisabled: true }]) {
+  it('does not send when missing a prompt, disabled, busy, or holding Enter', () => {
+    for (const props of [{ modelValue: '  ' }, { busy: true }, { sendDisabled: true }]) {
       const wrapper = ready(props)
       press(wrapper)
       expect(wrapper.emitted('send')).toBeUndefined()
@@ -86,3 +86,14 @@ describe('composer keyboard sending', () => {
     wrapper.unmount()
   })
 })
+
+it('accepts multiple attachments and sends plain chat with no file', async () => {
+  const wrapper = setup();
+  const files = [file(), file()];
+  await wrapper.get('section').trigger('drop', {dataTransfer: {files}});
+  expect(wrapper.emitted('upload')).toEqual([[files]]);
+  await wrapper.setProps({modelValue:'你好'});
+  await wrapper.get('.send-button').trigger('click');
+  expect(wrapper.emitted('send')).toHaveLength(1);
+  wrapper.unmount();
+});

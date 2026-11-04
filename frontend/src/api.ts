@@ -35,10 +35,10 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
 }
 export const listFiles = (offset = 0) =>
   request<FileList>(`/api/files?limit=20&offset=${offset}`);
-export function uploadFile(file: File) {
+export function uploadFile(file: File, projectId?: string | null) {
   const body = new FormData();
   body.append("file", file);
-  return request<FileInfo>("/api/files", { method: "POST", body });
+  return request<FileInfo>(`/api/files${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ""}`, { method: "POST", body });
 }
 export const downloadUrl = (id: string) =>
   `/api/files/${encodeURIComponent(id)}/download`;
@@ -64,11 +64,16 @@ export const editDocument = (id: string, change: {block_id: string; revision: st
 export const deleteFile = (id: string) =>
   request<{ id: string; deleted: boolean }>(`/api/files/${encodeURIComponent(id)}`, { method: 'DELETE' });
 
+export interface WebSource { title: string; url: string; published_at?: string | null; retrieved_at: string; kind: 'search' | 'page'; }
 export interface TaskState {
-  id: string; file: FileInfo; prompt: string;
+  web_enabled?: boolean; web_activity?: string | null; activity?: string | null; repair_round?: number; creation_attempt?: number;
+  id: string; project_id?: string; file: FileInfo | null; files?: FileInfo[]; prompt: string;
   status: 'queued' | 'running' | 'cancelling' | 'completed' | 'failed' | 'cancelled';
   stage: number; steps: string[]; elapsed_seconds: number; error: string | null;
-  result: { file: FileInfo; position: number; summary: string; explanation: string; before: string; after: string } | null;
+  coverage?: string[];
+  result: { web_sources?: WebSource[]; web_status?: string; web_notices?: {code: string; message: string}[]; outputs?: { file: FileInfo; changes: { op: string; block_id: string; location: string; before: string; after: string }[] }[]; kind?: 'answer' | 'edit' | 'clarify' | 'create'; text?: string; file?: FileInfo; position?: number; summary?: string; explanation?: string; before?: string; after?: string;
+    changes?: { op: string; block_id: string; location: string; before: string; after: string }[];
+    citations?: { file_id: string; block_id: string; location: string; quote: string }[] } | null;
 }
 export const createTask = (file_id: string, prompt: string) => request<TaskState>('/api/tasks', {
   method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({file_id, prompt}),
@@ -77,6 +82,7 @@ export const getTask = (id: string) => request<TaskState>(`/api/tasks/${encodeUR
 export const cancelTask = (id: string) => request<TaskState>(`/api/tasks/${encodeURIComponent(id)}/cancel`, {method: 'POST'});
 
 export interface FileHistory {
+  sources?: SourceFile[];
   history_id: string;
   items: TaskState[];
   total: number;
@@ -89,6 +95,7 @@ export const getHistory = (id: string, before?: string) => request<FileHistory>(
 );
 
 export interface ProjectInfo {
+  file_count: number;
   id: string;
   source_file_id: string | null;
   name: string;
@@ -98,3 +105,17 @@ export interface ProjectInfo {
 }
 export const listProjects = (offset = 0) => request<{items: ProjectInfo[]; total: number}>(`/api/projects?limit=20&offset=${offset}`);
 export const deleteProject = (id: string) => request<{id: string; deleted: boolean}>(`/api/projects/${encodeURIComponent(id)}`, {method: 'DELETE'});
+
+export interface SourceFile extends FileInfo { origin?: 'uploaded' | 'generated'; current_file: FileInfo | null; }
+export const createProject = () => request<{id: string; name: string}>('/api/projects', {method: 'POST'});
+export const renameProject = (id: string, name: string) => request<{id: string; name: string}>(`/api/projects/${encodeURIComponent(id)}`, {
+  method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify({name}),
+});
+export const projectFiles = (id: string) => request<{items: SourceFile[]}>(`/api/projects/${encodeURIComponent(id)}/files`);
+export const projectHistory = (id: string, before?: string) => request<FileHistory>(`/api/projects/${encodeURIComponent(id)}/history?limit=20${before ? `&before=${encodeURIComponent(before)}` : ''}`);
+export const sendProjectTask = (project_id: string | null, file_ids: string[], prompt: string, web_enabled = true) => request<TaskState>('/api/tasks', {
+  method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({project_id, file_ids, prompt, web_enabled}),
+});
+
+export const deleteSourceFile = (projectId: string, fileId: string) =>
+  request<{ id: string; deleted: boolean }>(`/api/projects/${encodeURIComponent(projectId)}/files/${encodeURIComponent(fileId)}`, { method: 'DELETE' });

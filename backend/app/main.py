@@ -13,6 +13,7 @@ from .tasks import Manager, router as tasks_router
 from .files import router
 from .projects import router as projects_router, recover_deletions
 from .documents import router as documents_router
+from .conversations import router as conversations_router
 from .storage import data_directory
 
 
@@ -29,17 +30,18 @@ async def lifespan(app: FastAPI):
         await app.state.tasks.close()
 
 
-app = FastAPI(title="Office Agent API", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="Office Agent API", version="0.4.0", lifespan=lifespan)
 app.include_router(router)
 app.include_router(documents_router)
 app.include_router(tasks_router)
 app.include_router(projects_router)
+app.include_router(conversations_router)
 
 
 class HealthResponse(BaseModel):
     status: Literal["ok"] = "ok"
     service: str = "office-agent"
-    version: str = "0.2.0"
+    version: str = "0.4.0"
 
 
 @app.get("/api/health", response_model=HealthResponse, tags=["health"])

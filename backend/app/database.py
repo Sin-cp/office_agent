@@ -35,6 +35,8 @@ def initialize(root: Path):
         migrate(db)
         from .projects import migrate as migrate_projects
         migrate_projects(db)
+        from .conversations import migrate as migrate_conversations
+        migrate_conversations(db)
 
 
 def insert(root: Path, record: dict):
@@ -53,6 +55,10 @@ def insert_record(db, record):
     register(db, record)
     from .projects import register as register_project
     register_project(db, record)
+    from .conversations import project_for
+    project_id = project_for(db, record['id'])
+    db.execute('INSERT OR IGNORE INTO conversations(project_id,current_file_id) VALUES (?,?)', (project_id, record['id']))
+    db.execute('UPDATE conversations SET current_file_id=? WHERE project_id=?', (record['id'], project_id))
 
 
 def list_files(root: Path, limit: int, offset: int):
@@ -71,7 +77,7 @@ def get(root: Path, file_id: str):
         return dict(row) if row else None
 
 
-def delete_file(root: Path, file_id: str):
+def delete_file(root: Path, file_id: str, project_id: str | None = None):
     """Delete metadata and bytes; restore bytes if the transaction fails."""
     original = None
     path = None
@@ -81,9 +87,15 @@ def delete_file(root: Path, file_id: str):
             db.execute("BEGIN IMMEDIATE")
             if db.execute("SELECT 1 FROM tasks WHERE json_extract(payload, '$.status') IN ('queued','running','cancelling') LIMIT 1").fetchone():
                 raise ActiveTaskError('任务执行期间不能删除文件，请等待结束或停止后重试')
+            if project_id is not None:
+                source = db.execute('SELECT * FROM project_sources WHERE project_id=? AND source_file_id=? AND deleted=0', (project_id, file_id)).fetchone()
+                if source is None:
+                    return False
+                db.execute('UPDATE project_sources SET deleted=1,current_file_id=NULL WHERE source_file_id=?', (file_id,))
+                db.execute('UPDATE conversations SET current_file_id=NULL WHERE project_id=? AND current_file_id=?', (project_id, source['current_file_id']))
             row = db.execute("SELECT * FROM files WHERE id = ?", (file_id,)).fetchone()
             if row is None:
-                return False
+                return project_id is not None
             path = root / "uploads" / row["storage_key"]
             if path.exists():
                 original = path.read_bytes()

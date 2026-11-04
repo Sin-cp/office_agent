@@ -30,7 +30,7 @@ class FileList(BaseModel):
 
 
 @router.post("", response_model=FileInfo, status_code=201)
-def upload_file(request: Request, file: UploadFile):
+def upload_file(request: Request, file: UploadFile, project_id: str | None = None):
     root = request.app.state.data_dir
     name = (file.filename or "").replace("\\", "/").split("/")[-1]
     file_id = str(uuid4())
@@ -66,7 +66,16 @@ def upload_file(request: Request, file: UploadFile):
             created_at=datetime.now(timezone.utc).isoformat(),
         )
         temporary.replace(destination)
-        database.insert(root, record)
+        if project_id:
+            with database.connection(root) as db:
+                db.execute('BEGIN IMMEDIATE')
+                from .conversations import ensure_project
+                ensure_project(db, project_id)
+                if db.execute("SELECT 1 FROM tasks WHERE json_extract(payload,'$.status') IN ('queued','running','cancelling')").fetchone():
+                    raise HTTPException(409, '任务执行期间不能添加文件')
+                database.insert_record(db, {**record, 'project_id': project_id})
+        else:
+            database.insert(root, record)
         committed = True
         return record
     except (OSError, sqlite3.Error) as exc:

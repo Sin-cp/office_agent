@@ -17,7 +17,7 @@ Nginx 接收上限是 11 MiB 的整个请求，后端仍只允许 10 MiB 文件�
 
 ## 第一次在 ECS 启动
 
-以下命令在 **ECS 服务器终端**执行，需要先把完整项目传到 `/srv/office-agent/app`。目前尚未上传服务器，也没有推送 GitHub。不要复制本地 `.venv`、`node_modules` 或真实数据作为程序包。
+以下命令在 **ECS 服务器终端**执行，需要先把完整项目传到 `/srv/office-agent/app`。已有线上环境请使用本文末尾的一键部署脚本进行更新。不要复制本地 `.venv`、`node_modules` 或真实数据作为程序包。
 
 ### 1. 准备独立数据目录
 
@@ -96,7 +96,7 @@ docker compose up -d --wait
 
 ## 验收与关闭
 
-1. 页面、静态资源加载正常，API 返回 version 0.2.0。
+1. 页面、静态资源加载正常，API 返回 version 0.4.0。
 2. 上传自制 DOCX；抽屉显示记录；下载文件与原文件一致。
 3. 无效文档、超限文件有错误提示。
 4. `docker compose restart` 后文件仍可下载。
@@ -149,3 +149,91 @@ docker compose start
 在服务器现有 `.env` 中补充 `DEEPSEEK_API_KEY`、`DEEPSEEK_MODEL=deepseek-flash`、`DEEPSEEK_BASE_URL=https://api.deepseek.com`。不要覆盖已有的数据目录配置，不将密钥传给前端。Compose 会显式传入后端容器；避免分享 `docker compose config` 的展开输出，其中可能包含密钥，检查配置使用 `--quiet`。
 
 备份数据后依次执行 `docker compose build backend`、`docker compose build web`、`docker compose up -d --wait --wait-timeout 120`。任务调度仅支持单进程后端，不配置多个 workers 或副本。更新会中断运行中的任务，请待任务完成或停止后部署。
+
+
+## 一键同步并部署脚本
+
+入口为 `scripts/deploy.sh`，配套的两个 Python 文件必须保留在同一目录。本地脚本从自身位置定位项目，因此可从任意工作目录调用。它同步当前文件内容，包括未提交的修改和新增源码，不要求先推送 GitHub。
+
+### 首次准备 SSH
+
+本地需要 Bash、Python 3.8+、SSH、rsync；服务器需要 Python 3.8+、rsync、tar、Docker 和支持 `up --wait`、`config --format json` 的 Compose v2。服务器必须已有运行中的单个 backend 和 web 容器、项目目录及 `.env`；脚本不是首次安装工具。
+
+先通过正常 SSH 登录一次，核对服务器指纹并确认密钥可用。脚本启用 `BatchMode=yes` 和 `StrictHostKeyChecking=yes`，不会保存密码、跳过指纹检查或在自动部署中等待密码输入。加密私钥可提前载入 ssh-agent。
+
+可在本机 `~/.ssh/config` 中配置别名（私钥路径按实际修改）：
+
+```sshconfig
+Host office-agent-prod
+    HostName 60.205.124.226
+    User root
+    IdentityFile ~/.ssh/id_ed25519
+    IdentitiesOnly yes
+```
+
+```bash
+ssh office-agent-prod
+```
+
+SSH 端口和密钥都通过该配置管理，部署脚本不另存认证信息。
+
+### 日常执行
+
+默认服务器为 `root@60.205.124.226`，项目目录 `/srv/office-agent/app`，备份目录 `/srv/office-agent/backups`：
+
+```bash
+./scripts/deploy.sh --dry-run
+./scripts/deploy.sh
+```
+
+使用别名或其他专用目录：
+
+```bash
+./scripts/deploy.sh --host office-agent-prod --dry-run
+./scripts/deploy.sh --host office-agent-prod \
+  --remote-dir /srv/office-agent/app \
+  --backup-dir /srv/office-agent/backups
+```
+
+`--dry-run` 仅检查环境、权限和活动任务并执行 rsync 预览：不获取远程锁、不上传文件、不创建远程备份目录，也不构建或重启容器。它会在本地临时目录准备同步清单；预览不能替代实际构建和启动验证。
+
+### 同步范围与数据保护
+
+- 后端：`backend/app` 内的 Python 源码、requirements.txt、Dockerfile、.dockerignore。
+- 前端：`frontend/src` 内允许的源码和静态资源扩展名，以及 package.json、锁文件、index.html、tsconfig.json、vite.config.ts、nginx.conf、Dockerfile、.dockerignore。
+- 根目录：compose.yaml。
+- 不上传 `.env`、Git 信息、本地练习、测试、虚拟环境、依赖目录、dist、数据库、上传文件、日志及密钥文件。隐藏目录也不会作为源码上传。
+- 仅在 `backend/app` 和 `frontend/src` 内删除已移除且属于白名单的源码文件；被排除的配置与数据在接收端受到保护。其他目录没有删除同步。
+- 不跟随源码符号链接。新增运行资源类型或 Docker COPY 路径时，需要同步更新脚本白名单；否则新资源不会自动发布。
+- 服务器现有 `.env` 保持原样。实际数据路径从当前后端容器的 `/data` 绑定挂载读取，不假设它一定是默认路径；禁止数据挂载与源码目录重叠。
+
+### 执行顺序
+
+脚本使用持续 SSH 会话和服务器文件锁串行化部署；锁文件位于项目目录旁，例如 `/srv/office-agent/.app.deploy.lock`，会话退出后自动释放锁。锁文件保留是正常现象，不应通过删除锁文件解除正在执行的锁。该锁仅协调本脚本，不限制人工 Docker 操作。
+
+预检使用后端容器的默认运行用户检查 `/data`、`/data/uploads` 和数据库文件的访问权限，并只读检查活动任务。发现之前遇到的 root 所有上传目录问题会停止，不会自动递归修改权限。通过后开始同步，验证 Compose 配置，并依次构建后端、前端镜像；构建期间现有容器继续运行。
+
+构建完成后再次检查任务，然后先停止 web 入口、再次检查任务，确认没有新任务进入后停止 backend。这段时间网站暂时不可访问。数据目录整体打包为带时间与随机标识的 `.tar.gz`，同时包含 SQLite、上传文件和其他业务状态。备份目录须为 `0700`；新建时自动按此权限创建，已有目录权限不符时提示后停止。归档文件只允许所有者访问，不自动删除旧备份。
+
+备份成功后执行 `docker compose up -d --wait --wait-timeout 120`。成功还要求 web 容器经 Nginx 访问 `/api/health` 返回 `status=ok`，以及新后端的数据写入权限预检通过。最后输出监听地址和备份路径。监听为 `0.0.0.0:8080` 时从外部使用服务器 IP；监听为 `127.0.0.1:8080` 时沿用 SSH 隧道。
+
+### 失败处理
+
+- SSH/预检失败：尚未同步，按错误提示检查依赖、指纹、密钥、任务或权限。
+- rsync 或构建失败：不停止现有容器，但服务器源码可能已部分或全部更新；修正后重新运行脚本。
+- 暂停入口后发现任务，或备份失败：尝试启动原 backend/web 容器恢复服务，停止发布；失败的临时备份清理，不生成成功提示。
+- 更新或健康验证失败：返回非零退出码，保留备份。先查看 `docker compose ps` 和 `docker compose logs --tail=100 backend web`。运行状态可能已发生变化，不能假定仍为旧版本。
+- 发布中断：SSH 正常退出或断开后锁会释放；构建命令可能需要结束后才能释放。若发生服务器断电或强制终止，需手工检查容器和 `.partial` 备份，不把不完整归档当作可恢复备份。
+
+更新失败不自动降级数据库，也不自动删除服务器数据。数据库结构已经迁移时，恢复旧代码前应停止相关容器、另存当前数据，并将选定的完整备份恢复到实际挂载目录，再使用与备份匹配的旧代码或旧镜像启动。恢复时确保 UID/GID 10001 的权限；仅更新镜像或重启不能解决目录属主问题。数据备份不等于源码备份，发布前应保留可回退的代码版本。
+
+### 本地验证与线上验证边界
+
+```bash
+bash -n scripts/deploy.sh
+python3 -m unittest discover -s scripts/tests -v
+```
+
+测试将 SSH、Docker、tar 和远程 rsync 替换为临时命令，验证锁、同步保护、构建顺序、活动任务、权限、备份和启动失败；另外使用本机真实 rsync 在临时目录验证过滤和删除规则。不连接线上服务器，不调用真实 Docker，不读取本地 `.env`。
+
+本次实现仅完成这些本地验证。首次线上使用先执行 `--dry-run`，再实际部署；线上权限、网络、镜像构建及运行健康结果以该次运行输出为准。

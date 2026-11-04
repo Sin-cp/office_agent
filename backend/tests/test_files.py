@@ -138,7 +138,7 @@ class FilesTest(unittest.TestCase):
         )
 
     def test_health(self):
-        self.assertEqual(self.client.get("/api/health").json()["version"], "0.2.0")
+        self.assertEqual(self.client.get("/api/health").json()["version"], "0.4.0")
 
 
 if __name__ == "__main__":
