@@ -6,7 +6,7 @@ from uuid import uuid4
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 
-from . import database, document_service as service
+from . import database, document_service as service, naming
 from .files import FileInfo
 from .storage import MAX_BYTES, validate_docx
 
@@ -49,6 +49,24 @@ def load(request, file_id):
     return load_file(request.app.state.data_dir, file_id)
 
 
+def family_names(root, file_id):
+    """Published names of this file's version family, for numbering new versions."""
+    with database.connection(root) as db:
+        row = db.execute('SELECT history_id FROM file_history WHERE file_id=?', (file_id,)).fetchone()
+        if not row:
+            return []
+        rows = db.execute('SELECT f.name FROM files f JOIN file_history h ON h.file_id=f.id WHERE h.history_id=?',
+                          (row['history_id'],)).fetchall()
+    return [item['name'] for item in rows]
+
+
+def result_name(root, record, name=None):
+    """An explicit rename wins; otherwise the next numbered ``_修改版N`` name."""
+    if name:
+        return naming.safe_name(name)
+    return naming.versioned_name(record['name'], family_names(root, record['id']))
+
+
 @router.get('/{file_id}/content')
 def content(request: Request, file_id: str):
     _, record, _, document, revision, items = load(request, file_id)
@@ -68,7 +86,7 @@ def apply_edit(root, file_id, change):
     return publish_edit(root, prepared)
 
 
-def prepare_edit(root, file_id, change, task=False):
+def prepare_edit(root, file_id, change, name=None):
     root, record, data, document, revision, items = load_file(root, file_id)
     if change.revision != revision:
         raise HTTPException(409, '文档已变化，请重新读取后修改')
@@ -82,7 +100,7 @@ def prepare_edit(root, file_id, change, task=False):
     if change.new_text == selected['text']:
         raise HTTPException(400, '文字没有变化，无需生成新文件')
     new_id = str(uuid4())
-    temporary = root / 'uploads' / f"{'task-' if task else ''}{new_id}.tmp"
+    temporary = root / 'uploads' / f'{new_id}.tmp'
     destination = root / 'uploads' / f'{new_id}.docx'
     committed = False
     try:
@@ -91,7 +109,7 @@ def prepare_edit(root, file_id, change, task=False):
         validate_docx(temporary)
         if temporary.stat().st_size > MAX_BYTES:
             raise HTTPException(413, '生成文件超过 10 MiB 限制')
-        result = dict(id=new_id, name=record['name'][:-5][:220] + '_修改版.docx',
+        result = dict(id=new_id, name=result_name(root, record, name),
                       size=temporary.stat().st_size, storage_key=destination.name,
                       created_at=datetime.now(timezone.utc).isoformat(), source_file_id=file_id)
         committed = True
@@ -123,7 +141,7 @@ def publish_edit(root, prepared, persist=None):
         raise HTTPException(500, '生成文件失败，请稍后重试') from exc
 
 
-def prepare_batch(root, file_id, revision, operations):
+def prepare_batch(root, file_id, revision, operations, name=None):
     from . import operations as engine
     root, record, data, document, actual, _ = load_file(root, file_id)
     if actual != revision:
@@ -141,10 +159,84 @@ def prepare_batch(root, file_id, revision, operations):
         service.read_document(temporary)
         if temporary.stat().st_size > MAX_BYTES:
             raise HTTPException(413, '生成文件超过 10 MiB 限制')
-        record = dict(id=identity, name=record['name'][:-5][:220] + '_修改版.docx',
+        record = dict(id=identity, name=result_name(root, record, name),
                       size=temporary.stat().st_size, storage_key=destination.name,
                       created_at=datetime.now(timezone.utc).isoformat(), source_file_id=file_id)
         return (temporary, destination, record), changes
+    except Exception as exc:
+        temporary.unlink(missing_ok=True)
+        if isinstance(exc, ValueError):
+            raise HTTPException(422, str(exc)) from exc
+        raise
+
+
+def prepare_image(root, file_id, after_block_id, image_path, width_cm=12.0, caption=''):
+    """Deterministic image insertion: the caller picks the position, not the model's judgement.
+
+    python-docx must rewrite the whole package here (an image adds a media part),
+    so this path saves the document instead of patching word/document.xml.
+    """
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.shared import Cm
+    from . import operations as engine
+
+    root, record, data, document, revision, _ = load_file(root, file_id)
+    identity = str(uuid4())
+    temporary = root / 'uploads' / f'task-{identity}.tmp'
+    destination = root / 'uploads' / f'{identity}.docx'
+    try:
+        anchor = None
+        if after_block_id:
+            _, refs = engine.inventory(document, file_id)
+            entry = refs.get(after_block_id)
+            if entry is None:
+                raise HTTPException(400, '插图位置不存在或已变化')
+            block, target = entry
+            if block['kind'] != 'document_end':
+                anchor = target
+        paragraph = document.add_paragraph()
+        run = paragraph.add_run()
+        run.add_picture(str(image_path), width=Cm(width_cm))
+        caption_paragraph = None
+        if caption.strip():
+            caption_paragraph = document.add_paragraph(caption.strip())
+            caption_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        if anchor is not None:
+            anchor._element.addnext(paragraph._p)
+            if caption_paragraph is not None:
+                paragraph._p.addnext(caption_paragraph._p)
+        document.save(temporary)
+        validate_docx(temporary)
+        service.read_document(temporary)
+        if temporary.stat().st_size > MAX_BYTES:
+            raise HTTPException(413, '生成文件超过 10 MiB 限制')
+        record = dict(id=identity, name=result_name(root, record),
+                      size=temporary.stat().st_size, storage_key=destination.name,
+                      created_at=datetime.now(timezone.utc).isoformat(), source_file_id=file_id)
+        return temporary, destination, record
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
+
+
+def prepare_rename(root, file_id, name):
+    """A rename-only version: identical bytes, new metadata, original untouched."""
+    root, record, data, _, _, _ = load_file(root, file_id)
+    identity = str(uuid4())
+    temporary = root / 'uploads' / f'task-{identity}.tmp'
+    destination = root / 'uploads' / f'{identity}.docx'
+    new_name = naming.safe_name(name)
+    if new_name == record['name']:
+        raise HTTPException(400, '文件名称没有变化，无需生成新版本')
+    try:
+        temporary.write_bytes(data)
+        validate_docx(temporary)
+        if temporary.stat().st_size > MAX_BYTES:
+            raise HTTPException(413, '生成文件超过 10 MiB 限制')
+        result = dict(id=identity, name=new_name, size=temporary.stat().st_size,
+                      storage_key=destination.name,
+                      created_at=datetime.now(timezone.utc).isoformat(), source_file_id=file_id)
+        return temporary, destination, result
     except Exception as exc:
         temporary.unlink(missing_ok=True)
         if isinstance(exc, ValueError):

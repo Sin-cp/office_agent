@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { describe, it, expect } from 'vitest'
 import Composer from '../src/components/Composer.vue'
 
@@ -96,4 +96,43 @@ it('accepts multiple attachments and sends plain chat with no file', async () =>
   await wrapper.get('.send-button').trigger('click');
   expect(wrapper.emitted('send')).toHaveLength(1);
   wrapper.unmount();
+});
+
+it('places project files after the web switch and emits only when available', async () => {
+  const wrapper = mount(Composer, { props: { busy: false, message: '', error: '', projectFilesAvailable: true } });
+  await flushPromises();
+  const toolbar = wrapper.get('.composer-toolbar').html();
+  expect(toolbar.indexOf('web-switch-row')).toBeLessThan(toolbar.indexOf('project-files-button'));
+  await wrapper.get('[data-testid="project-files"]').trigger('click');
+  expect(wrapper.emitted('project-files')).toHaveLength(1);
+  wrapper.unmount();
+
+  const hidden = mount(Composer, { props: { busy: false, message: '', error: '' } });
+  await flushPromises();
+  expect(hidden.find('[data-testid="project-files"]').exists()).toBe(false);
+  hidden.unmount();
+});
+
+it('turns the send button into a stop action while a task is active', async () => {
+  const wrapper = mount(Composer, {
+    props: { busy: true, message: '', error: '', canStop: true, stopping: false },
+  });
+  const button = wrapper.get('.send-button');
+  expect(button.classes()).toContain('is-stop');
+  expect(button.attributes('aria-label')).toBe('停止处理');
+  expect(button.attributes('disabled')).toBeUndefined();
+
+  await button.trigger('click');
+  expect(wrapper.emitted('stop')).toHaveLength(1);
+  expect(wrapper.emitted('send')).toBeUndefined();
+
+  await wrapper.setProps({ stopping: true });
+  expect(wrapper.get('.send-button').attributes('aria-label')).toBe('正在停止');
+  expect(wrapper.get('.send-button').attributes('disabled')).toBeDefined();
+  wrapper.unmount();
+
+  const idle = mount(Composer, { props: { busy: false, message: '', error: '', modelValue: '你好' } });
+  expect(idle.get('.send-button').classes()).not.toContain('is-stop');
+  expect(idle.get('.send-button').attributes('aria-label')).toBe('发送处理要求');
+  idle.unmount();
 });

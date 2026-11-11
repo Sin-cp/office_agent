@@ -50,7 +50,10 @@ def record_task(db, state):
     project_id = state.get('project_id') or project_for(db, source)
     if not project_id or not state.get('prompt'):
         return
-    message(db, state['id'] + ':user', project_id, state['id'], 'user', {'text': state['prompt']}, source, state['started_at'])
+    user_content = {'text': state['prompt']}
+    if state.get('images'):
+        user_content['image_ids'] = [item['id'] for item in state['images']]
+    message(db, state['id'] + ':user', project_id, state['id'], 'user', user_content, source, state['started_at'])
     if state['status'] in ('completed', 'failed', 'cancelled'):
         result = state.get('result') or {}
         content = dict(status=state['status'], kind=result.get('kind', 'edit'),
@@ -63,15 +66,59 @@ def record_task(db, state):
         message(db, state['id'] + ':assistant', project_id, state['id'], 'assistant', content, source, state.get('finished_at') or time.time())
 
 
+def model_content(content):
+    """Bound verbose result payloads before they enter a model prompt.
+
+    The messages table keeps the full record for the UI; the model only needs the
+    outcome and a short diff, so large edits do not crowd out memory.
+    """
+    if not isinstance(content, dict):
+        return content
+    value = dict(content)
+    changes = value.get('changes')
+    if isinstance(changes, list) and changes:
+        value['change_count'] = len(changes)
+        value['changes'] = [dict(op=item.get('op'), location=item.get('location'),
+                                 before=(item.get('before') or '')[:160],
+                                 after=(item.get('after') or '')[:160])
+                            for item in changes[:3] if isinstance(item, dict)]
+    outputs = value.get('outputs')
+    if isinstance(outputs, list) and outputs:
+        value['outputs'] = [dict(file=(item.get('file') or {}).get('name'),
+                                 changes=len(item.get('changes') or []))
+                            for item in outputs[:5] if isinstance(item, dict)]
+    citations = value.get('citations')
+    if isinstance(citations, list) and citations:
+        value['citations'] = [dict(location=item.get('location'), quote=(item.get('quote') or '')[:80])
+                              for item in citations[:3] if isinstance(item, dict)]
+    sources = value.get('web_sources')
+    if isinstance(sources, list) and sources:
+        value['web_sources'] = [dict(title=item.get('title'))
+                                for item in sources[:3] if isinstance(item, dict)]
+    return value
+
+
 def context(root, project_id, file_id):
+    from .projects import source_files
     with database.connection(root) as db:
         memory = db.execute('SELECT * FROM conversations WHERE project_id=?', (project_id,)).fetchone()
         rows = db.execute('SELECT * FROM messages WHERE project_id=? ORDER BY seq', (project_id,)).fetchall()
+        project = db.execute('SELECT name FROM projects WHERE id=?', (project_id,)).fetchone()
+        version = current(db, root, project_id)
+        sources = source_files(root, db, project_id)
     through = memory['summary_through'] if memory else 0
+    files = [dict(id=item.get('source_file_id'), name=item.get('name'), origin=item.get('origin'),
+                  current=(dict(id=item['current_file']['id'], name=item['current_file']['name'])
+                           if item.get('current_file') else None))
+             for item in sources[:20]]
     return dict(project_id=project_id, current_file_id=file_id,
                 summary=memory['summary'] if memory else '',
                 preferences=json.loads(memory['preferences']) if memory else [],
-                messages=[dict(seq=r['seq'], role=r['role'], content=json.loads(r['content']), file_id=r['file_id']) for r in rows if r['seq'] > through])
+                project=dict(name=project['name'] if project else '', sources=files),
+                current_file=dict(id=version['id'], name=version['name']) if version else None,
+                messages=[dict(seq=r['seq'], role=r['role'],
+                               content=model_content(json.loads(r['content'])), file_id=r['file_id'])
+                          for r in rows if r['seq'] > through])
 
 
 def store_memory(root, project_id, summary, through, preferences):

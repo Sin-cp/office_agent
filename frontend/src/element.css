@@ -1,0 +1,459 @@
+:root {
+  --el-color-primary: #586be2;
+  --el-color-primary-light-3: #8183e5;
+  --el-color-primary-light-5: #a5b0ef;
+  --el-color-primary-light-7: #c8cff7;
+  --el-color-primary-light-8: #d9defa;
+  --el-color-primary-light-9: #eef0ff;
+  --el-color-primary-dark-2: #4656c4;
+  --el-color-danger: #dc4545;
+  --el-color-danger-light-9: #fff2f2;
+  --el-color-success: #2f9d68;
+  --el-border-radius-base: 8px;
+  --el-border-radius-small: 6px;
+  --el-border-color: #dce2ee;
+  --el-border-color-light: #e6e8f0;
+  --el-border-color-lighter: #edf0f6;
+  --el-text-color-primary: #202938;
+  --el-text-color-regular: #4b5568;
+  --el-text-color-secondary: #78859a;
+  --el-fill-color-blank: #fff;
+  --el-font-family:
+    Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+/* Element Plus ships icons as SVG; keep the app's custom SVG sizing scoped. */
+.el-icon svg {
+  width: 1em;
+  height: 1em;
+}
+
+.el-button.is-link,
+.el-button.is-text {
+  height: auto;
+  padding: 0;
+  font-size: inherit;
+  vertical-align: baseline;
+}
+
+.el-button.is-link {
+  font-weight: 500;
+}
+
+.el-button.is-link + .el-button.is-link {
+  margin-left: 12px;
+}
+
+.el-button.icon-button,
+.el-button.send-button {
+  padding: 0;
+}
+
+.files-badge .el-badge__content {
+  height: 16px;
+  min-width: 16px;
+  padding: 0 5px;
+  border: 0;
+  background: #586be2;
+  font-size: 10px;
+  line-height: 16px;
+}
+
+.el-button.text-button {
+  height: auto;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #586dd7;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.el-button.text-button:hover {
+  color: #3f52c4;
+  background: transparent;
+}
+
+.el-button.load-more {
+  margin: 20px auto;
+  border-color: #dce3f2;
+  color: #586dd7;
+}
+
+/* Project sidebar */
+.sidebar .el-button {
+  font-family: inherit;
+}
+.sidebar .el-tag.brand-version {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  line-height: 18px;
+}
+.sidebar .el-scrollbar__bar.is-vertical {
+  right: 2px;
+}
+.sidebar .el-scrollbar__thumb {
+  background: #c8c8cd;
+  opacity: 0.55;
+}
+.project-skeleton .el-skeleton__item {
+  background: #e7e7e9;
+}
+.project-menu.el-popper {
+  border-color: #e5e5e8;
+  border-radius: 10px;
+  box-shadow: 0 12px 32px #17181b1f;
+}
+.project-menu .el-dropdown-menu {
+  min-width: 128px;
+  padding: 5px;
+}
+.project-menu .el-dropdown-menu__item {
+  padding: 7px 12px;
+  border-radius: 6px;
+  color: #303136;
+  font-size: 13px;
+}
+.project-menu .el-dropdown-menu__item:not(.is-disabled):focus {
+  background: #f0f0f2;
+  color: #17181b;
+}
+.project-menu .el-dropdown-menu__item.danger {
+  color: #c84141;
+}
+.project-menu .el-dropdown-menu__item.danger:not(.is-disabled):focus {
+  background: #fdf0f0;
+  color: #b52f2f;
+}
+.project-menu .el-dropdown-menu__item--divided {
+  margin-top: 4px;
+  border-top-color: #ededf0;
+}
+
+/* Project rename dialog (MessageBox is mounted on body). */
+.project-rename-dialog.el-message-box {
+  --el-color-primary: #6264d9;
+  --el-color-primary-light-3: #8183e5;
+  --el-color-primary-dark-2: #5052bf;
+  width: 440px;
+  max-width: calc(100vw - 32px);
+  padding: 24px;
+  border: 1px solid #e6e8f0;
+  border-radius: 16px;
+  box-shadow: 0 20px 64px #18233e26;
+}
+.project-rename-dialog .el-message-box__header {
+  padding: 0 32px 18px 0;
+}
+.project-rename-dialog .el-message-box__title {
+  color: #202938;
+  font-size: 20px;
+  font-weight: 600;
+}
+.project-rename-dialog .el-message-box__headerbtn {
+  top: 20px;
+  right: 20px;
+}
+.project-rename-dialog .el-message-box__content {
+  padding: 0;
+}
+.project-rename-dialog .el-message-box__message {
+  color: #69758a;
+  font-size: 14px;
+}
+.project-rename-dialog .el-message-box__input {
+  padding-top: 10px;
+}
+.project-rename-dialog .el-input {
+  width: 100%;
+}
+.project-rename-dialog .el-input__wrapper {
+  padding: 4px 14px;
+  border-radius: 10px;
+  background: #f8f9fc;
+  box-shadow: 0 0 0 1px #dce1ed inset;
+  transition:
+    box-shadow 0.15s,
+    background-color 0.15s;
+}
+.project-rename-dialog .el-input__wrapper:hover {
+  box-shadow: 0 0 0 1px #b2b8d3 inset;
+}
+.project-rename-dialog .el-input__wrapper.is-focus {
+  background: #fff;
+  box-shadow:
+    0 0 0 1px #6264d9 inset,
+    0 0 0 3px #6264d91a;
+}
+.project-rename-dialog .el-input__inner {
+  height: 36px;
+  color: #202938;
+  font-size: 15px;
+}
+.project-rename-dialog .el-message-box__input.is-error .el-input__wrapper {
+  box-shadow: 0 0 0 1px #dc4545 inset;
+}
+.project-rename-dialog .el-message-box__errormsg {
+  padding-top: 6px;
+  font-size: 12px;
+}
+.project-rename-dialog .el-message-box__btns {
+  padding: 20px 0 0;
+  gap: 10px;
+}
+.project-rename-dialog .el-message-box__btns .el-button {
+  min-width: 80px;
+  height: 36px;
+  margin: 0;
+  border-radius: 8px;
+  font-size: 14px;
+}
+
+/* Project files drawer */
+.files-head-actions .el-button.icon-button {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+}
+.file-icon-button.el-button,
+.file-icon-button.el-button.is-text {
+  width: 29px;
+  height: 29px;
+  padding: 0;
+}
+.files-drawer .el-checkbox {
+  height: auto;
+  margin-right: 0;
+}
+.files-drawer .el-checkbox__inner {
+  width: 18px;
+  height: 18px;
+  border: 1.5px solid #c8d0df;
+  border-radius: 50%;
+  background: #fff;
+  transition:
+    border-color 0.15s,
+    background-color 0.15s,
+    box-shadow 0.15s;
+}
+.files-drawer .el-checkbox__input:not(.is-disabled):hover .el-checkbox__inner {
+  border-color: #8e9ddd;
+}
+.files-drawer .el-checkbox__input.is-checked .el-checkbox__inner {
+  border-color: #586be2;
+  background: #586be2;
+  box-shadow: 0 2px 5px #586be22b;
+}
+.files-drawer .el-checkbox__inner::after {
+  top: 7px;
+  left: 7px;
+  width: 4px;
+  height: 8px;
+  border-width: 2px;
+  border-color: #fff;
+}
+.files-drawer .el-checkbox.is-disabled .el-checkbox__inner {
+  border-color: #dfe4ee;
+  background: #f4f6fa;
+}
+.files-drawer .el-scrollbar__thumb {
+  background: #c9cedb;
+}
+.files-drawer .el-skeleton {
+  padding: 14px 8px;
+}
+.files-drawer .el-empty {
+  padding: 46px 8px 20px;
+}
+.files-drawer .el-empty__description p {
+  color: #8d96a8;
+  font-size: 12px;
+}
+.files-drawer .el-alert {
+  --el-alert-padding: 8px 10px;
+  border-radius: 8px;
+}
+.files-drawer .el-alert__title {
+  font-size: 12px;
+  line-height: 1.5;
+}
+.files-drawer-overlay {
+  background-color: #17181b2e;
+}
+.preview-dialog.el-dialog {
+  max-height: 92vh;
+}
+.preview-dialog .el-dialog__body {
+  max-height: calc(92vh - 58px);
+  overflow: hidden;
+}
+@media (max-width: 640px) {
+  .file-icon-button.el-button,
+  .file-icon-button.el-button.is-text {
+    width: 27px;
+    height: 27px;
+  }
+}
+
+/* Composer */
+.composer .el-textarea__inner {
+  min-height: 88px !important;
+  max-height: 240px;
+  padding: 0 2px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: #25334b;
+  font-family: inherit;
+  font-size: 15px;
+  line-height: 1.7;
+  resize: none;
+}
+
+.composer .el-textarea__inner:hover,
+.composer .el-textarea__inner:focus {
+  box-shadow: none;
+}
+
+.composer .el-textarea__inner::placeholder {
+  color: #9ba4b5;
+}
+
+/* Element Plus paints its disabled/hover ring as an inset box-shadow, which
+   outranks the plain `.composer .el-textarea__inner` reset above and draws a
+   stray 1px frame inside the card while a task is running. */
+.composer .el-textarea.is-disabled .el-textarea__inner {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  color: transparent;
+  outline: none;
+  cursor: not-allowed;
+}
+
+.composer .el-textarea.is-exceed .el-textarea__inner {
+  box-shadow: none;
+}
+
+.conversation-layout .composer .el-textarea__inner {
+  min-height: 50px !important;
+  max-height: 100px;
+  font-size: 14.5px;
+}
+
+/* The textarea stays the native editing surface; the mirrored layer below it
+   paints @mentions. Transparent text keeps both layers pixel-aligned. */
+.composer-editor {
+  position: relative;
+}
+.composer-editor .el-textarea__inner {
+  position: relative;
+  z-index: 1;
+  color: transparent;
+  caret-color: #25334b;
+  background: transparent;
+  scrollbar-width: none;
+}
+.composer-editor .el-textarea__inner::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+.composer-editor .el-textarea__inner::selection {
+  color: transparent;
+  background: #c8d3ff66;
+}
+/* The mirror keeps painting while IME composition is active: the live
+   composition string is merged into the overlay so @mentions stay highlighted. */
+@media (forced-colors: active) {
+  .composer-editor .el-textarea__inner {
+    color: CanvasText;
+  }
+  .composer-editor .composer-highlight {
+    display: none;
+  }
+}
+
+.web-switch-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  color: #738096;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.web-switch-row .el-switch {
+  --el-switch-on-color: #697bdc;
+  --el-switch-off-color: #c5ccda;
+  height: 18px;
+}
+
+.web-switch-row .el-switch__core {
+  min-width: 30px;
+  height: 18px;
+}
+
+.web-switch-row .el-switch__core .el-switch__action {
+  width: 14px;
+  height: 14px;
+}
+
+/* Assistant message controls */
+.result-icon.el-button,
+.result-icon.el-button.is-text {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+}
+.viewer-icon-button.el-button,
+.viewer-icon-button.el-button.is-text {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+}
+.viewer-reload.el-button {
+  height: 30px;
+  padding: 0 9px;
+}
+.viewer-actions .el-button + .el-button,
+.result-file-actions .el-button + .el-button,
+.file-actions .el-button + .el-button {
+  margin-left: 0;
+}
+.result-icon.el-button svg {
+  width: 15px;
+  height: 15px;
+}
+.result-icon.download.el-button.is-text:hover {
+  background: #edf5ff;
+  color: #2d67a8;
+}
+.result-icon.view.el-button.is-text:hover {
+  background: #f1f3ff;
+  color: #4253bd;
+}
+
+/* Document viewer */
+.document-preview .el-skeleton {
+  padding: 36px;
+}
+
+.document-preview .el-alert {
+  margin: 24px;
+  width: auto;
+}
+
+/* Mobile adjustments for EP overlays */
+@media (max-width: 640px) {
+  .preview-dialog.el-dialog {
+    width: 94vw !important;
+    margin: 3vh auto;
+  }
+  .preview-dialog .el-dialog__body {
+    max-height: calc(94vh - 60px);
+  }
+}

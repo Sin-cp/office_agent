@@ -41,17 +41,20 @@ def main():
         os.environ['OFFICE_AGENT_DATA_DIR'] = directory
         try:
             with TestClient(app) as client:
-                file = client.post('/api/files', files={'file': ('evaluation.docx', fixture(), 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')}).json()
+                project = client.post('/api/projects').json()['id']
+                file = client.post('/api/files', params={'project_id': project},
+                    files={'file': ('evaluation.docx', fixture(), 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')}).json()
                 cases = [
                     ('summary', '请总结文档，包括表格中的状态。仅回答，不修改文件。', 'answer'),
                     ('preference', '此文档后续统一使用正式、简洁的表达。请确认，不修改文件。', 'answer'),
                     ('context_edit', '沿用刚才的表达要求，将实施步骤的正文改写得更正式。', 'edit'),
                     ('table', '将表格中验收的状态从未完成改为已完成。', 'edit'),
-                    ('clarify', '把某个地方改一下，但我还没有说明具体位置和改法，请先问我。', 'clarify'),
+                    ('clarify', '把某个地方改一下，但我还没有说明具体位置和改法，请先问我。', 'answer'),
                 ]
                 for name, prompt, expected in cases:
                     before = client.get('/api/files').json()['total']
-                    response = client.post('/api/tasks', json={'file_id': file['id'], 'prompt': prompt})
+                    response = client.post('/api/tasks', json={
+                        'project_id': project, 'file_ids': [file['id']], 'prompt': prompt})
                     response.raise_for_status()
                     identity = response.json()['id']
                     deadline = time.monotonic() + 960
@@ -69,8 +72,11 @@ def main():
                         passed=state['status']=='completed' and result.get('kind')==expected and after-before==(1 if expected=='edit' else 0),
                         files_added=after-before, elapsed_seconds=state['elapsed_seconds'], metrics=state.get('metrics', []),
                         error=state.get('error'), manual_quality_review_required=True))
-                    if result.get('file'):
-                        file = result['file']
+                    output = result.get('file')
+                    if not output and result.get('outputs'):
+                        output = result['outputs'][0]['file']
+                    if output:
+                        file = output
         finally:
             if previous is None:
                 os.environ.pop('OFFICE_AGENT_DATA_DIR', None)

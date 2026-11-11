@@ -3,7 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils';
 import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 import App from '../src/App.vue';
 import Composer from '../src/components/Composer.vue';
-import FileDrawer from '../src/components/FileDrawer.vue';
+import ProjectSidebar from '../src/components/ProjectSidebar.vue';
 import TaskProgress from '../src/components/TaskProgress.vue';
 import * as api from '../src/api';
 vi.mock('../src/api', async (original) => ({...await original<typeof api>(), listProjects:vi.fn(), uploadFile:vi.fn(), sendProjectTask:vi.fn(), getTask:vi.fn(), cancelTask:vi.fn(), projectHistory:vi.fn(), createProject:vi.fn()}));
@@ -35,12 +35,13 @@ it('keeps a new file on the home page and transitions only after task creation',
   expect(wrapper.get('.send-button').attributes('disabled')).toBeDefined();
   await wrapper.get('textarea').setValue('润色开头');
   await wrapper.get('.send-button').trigger('click'); await flushPromises();
-  expect(api.sendProjectTask).toHaveBeenCalledWith(file.id,[file.id],'润色开头',true);
+  expect(api.sendProjectTask).toHaveBeenCalledWith(file.id,[file.id],'润色开头',true,[]);
   expect(wrapper.find('h1').exists()).toBe(false);
   expect(wrapper.get('.user-message').text()).toContain('润色开头');
   expect(wrapper.get('textarea').element.value).toBe('');
   expect(wrapper.get('[aria-label="清除当前选中文件"]').attributes('disabled')).toBeDefined();
-  expect(wrapper.get('.send-button').attributes('disabled')).toBeDefined();
+  expect(wrapper.get('.send-button').attributes('aria-label')).toBe('停止处理');
+  expect(wrapper.get('.send-button').attributes('disabled')).toBeUndefined();
   wrapper.unmount();
 });
 it('leaves the first prompt and home layout intact if creation fails', async () => {
@@ -63,7 +64,7 @@ it('keeps conversation and draft when cancelling attachments and sends no files 
   expect(wrapper.get('textarea').element.value).toBe('草稿');
   expect(localStorage.getItem('office-agent-selected-project')).toBe('source');
   await wrapper.get('.send-button').trigger('click'); await flushPromises();
-  expect(api.sendProjectTask).toHaveBeenCalledWith('source',[],'草稿',true);
+  expect(api.sendProjectTask).toHaveBeenCalledWith('source',[],'草稿',true,[]);
   wrapper.unmount();
 });
 it('uses the completed version for the next turn and keeps both prompts', async () => {
@@ -78,7 +79,7 @@ it('uses the completed version for the next turn and keeps both prompts', async 
   vi.mocked(api.sendProjectTask).mockResolvedValue({...running,id:'task2',file:newFile,prompt:'再精简一下'});
   await wrapper.get('textarea').setValue('再精简一下');
   await wrapper.get('.send-button').trigger('click'); await flushPromises();
-  expect(api.sendProjectTask).toHaveBeenLastCalledWith('source',['new'],'再精简一下',true);
+  expect(api.sendProjectTask).toHaveBeenLastCalledWith('source',['new'],'再精简一下',true,[]);
   expect(wrapper.findAll('.conversation-turn')).toHaveLength(2);
   wrapper.unmount();
 });
@@ -113,7 +114,8 @@ it('restores selected file and active history then survives polling network fail
   expect(wrapper.find('.conversation-history').exists()).toBe(true);
   await vi.advanceTimersByTimeAsync(1000); await flushPromises();
   expect(wrapper.text()).toContain('暂时无法获取进度');
-  expect(wrapper.get('.send-button').attributes('disabled')).toBeDefined();
+  expect(wrapper.get('.send-button').attributes('aria-label')).toBe('停止处理');
+  expect(wrapper.get('.send-button').attributes('disabled')).toBeUndefined();
   await vi.advanceTimersByTimeAsync(1000); await flushPromises();
   expect(wrapper.text()).toContain('修改完成');
   expect(wrapper.text()).toContain('3.0 秒');
@@ -139,7 +141,7 @@ it('waits for cancellation confirmation before allowing removal', async () => {
   vi.mocked(api.cancelTask).mockResolvedValue({...running,status:'cancelling'});
   vi.mocked(api.getTask).mockResolvedValue({...running,status:'cancelled'});
   const wrapper = await ready();
-  wrapper.getComponent(TaskProgress).vm.$emit('stop'); await flushPromises();
+  wrapper.getComponent(Composer).vm.$emit('stop'); await flushPromises();
   expect(wrapper.get('[aria-label="清除当前选中文件"]').attributes('disabled')).toBeDefined();
   await vi.advanceTimersByTimeAsync(1000); await flushPromises();
   expect(wrapper.get('[aria-label="清除当前选中文件"]').attributes('disabled')).toBeUndefined();
@@ -150,10 +152,9 @@ it('switches files without mixing records and restores the newest version on reo
   vi.mocked(api.projectHistory).mockResolvedValueOnce(history([completed],newFile));
   const wrapper = await ready();
   expect(wrapper.get('.selected-file-name').text()).toBe(newFile.name);
-  await wrapper.get('.files-toggle').trigger('click'); await flushPromises();
   const other = {...file,id:'other',name:'另一份.docx'};
   vi.mocked(api.projectHistory).mockResolvedValueOnce(history([],other));
-  wrapper.getComponent(FileDrawer).vm.$emit('edit',other); await flushPromises();
+  wrapper.getComponent(ProjectSidebar).vm.$emit('select',other); await flushPromises();
   expect(wrapper.find('.conversation-history').exists()).toBe(false);
   expect(wrapper.get('.selected-file-name').text()).toBe(other.name);
   wrapper.unmount();
@@ -169,7 +170,7 @@ it('loads older history without duplication and retains deleted results without 
   wrapper.unmount();
 });
 it('shows failure reason without a download link', () => {
-  const wrapper = mount(TaskProgress,{props:{task:{...running,status:'failed',error:'模型响应超时'},stopping:false}});
+  const wrapper = mount(TaskProgress,{props:{task:{...running,status:'failed',error:'模型响应超时'}}});
   expect(wrapper.text()).toContain('失败阶段：生成修改内容');
   expect(wrapper.find('a').exists()).toBe(false);
   wrapper.unmount();
@@ -179,14 +180,13 @@ it('keeps one source project after completion and clears current project by hist
   const wrapper = await ready();
   expect(wrapper.text()).not.toContain('已替换第 1 段');
   expect(wrapper.text()).not.toContain('修改说明');
-  expect(wrapper.text()).toContain('查看修改内容');
+  expect(wrapper.text()).toContain('修改详情');
   await wrapper.get('textarea').setValue('下一轮');
-  await wrapper.get('.files-toggle').trigger('click'); await flushPromises();
-  expect(wrapper.getComponent(FileDrawer).props('projects')).toEqual([file]);
-  wrapper.getComponent(FileDrawer).vm.$emit('deleted',{...file,id:'other'});
+  expect(wrapper.getComponent(ProjectSidebar).props('projects')).toEqual([file]);
+  wrapper.getComponent(ProjectSidebar).vm.$emit('deleted',{...file,id:'other'});
   await flushPromises();
   expect(wrapper.get('textarea').element.value).toBe('下一轮');
-  wrapper.getComponent(FileDrawer).vm.$emit('deleted',file); await flushPromises();
+  wrapper.getComponent(ProjectSidebar).vm.$emit('deleted',file); await flushPromises();
   expect(wrapper.find('.conversation-history').exists()).toBe(false);
   expect(wrapper.get('textarea').element.value).toBe('');
   expect(localStorage.getItem('office-agent-selected-project')).toBeNull();
@@ -200,26 +200,28 @@ it('renders an answer without modification chrome, file controls, or changing th
   await wrapper.get('textarea').setValue('总结文档');
   await wrapper.get('.send-button').trigger('click'); await flushPromises();
   await vi.advanceTimersByTimeAsync(1000); await flushPromises();
+  // The answer is revealed progressively, so let the typewriter finish.
+  await vi.advanceTimersByTimeAsync(2400); await flushPromises();
   expect(wrapper.text()).toContain('这是文档总结。');
   expect(wrapper.text()).not.toContain('修改完成');
   expect(wrapper.find('.task-actions').exists()).toBe(false);
-  expect(wrapper.find('.task-heading').exists()).toBe(false);
-  expect(wrapper.find('.task-progress ol').exists()).toBe(false);
+  expect(wrapper.find('.process-summary').exists()).toBe(false);
+  expect(wrapper.find('[data-testid="result-file"]').exists()).toBe(false);
   expect(wrapper.get('.selected-file-name').text()).toBe(file.name);
   expect(localStorage.getItem('office-agent-selected-project')).toBe(file.id);
   wrapper.unmount();
 });
 
 it('renders clarification as a message and keeps batch differences separate', () => {
-  const wrapper = mount(TaskProgress,{props:{stopping:false,task:{...running,status:'completed',result:{kind:'clarify',text:'你指的是哪个章节？'}}}});
+  const wrapper = mount(TaskProgress,{props:{task:{...running,status:'completed',result:{kind:'clarify',text:'你指的是哪个章节？'}}}});
   expect(wrapper.text()).toContain('你指的是哪个章节？');
   expect(wrapper.find('a').exists()).toBe(false);
   wrapper.unmount();
-  const batch = mount(TaskProgress,{props:{stopping:false,task:{...completed,result:{kind:'edit',text:'已修改两处',file:newFile,changes:[
+  const batch = mount(TaskProgress,{props:{task:{...completed,result:{kind:'edit',text:'已修改两处',file:newFile,changes:[
     {op:'replace',block_id:'a',location:'正文第1段',before:'旧',after:'新'},
     {op:'insert_paragraph',block_id:'b',location:'正文第2段',before:'',after:'新增'},
   ]}}}});
-  expect(batch.findAll('.task-result section')).toHaveLength(2);
+  expect(batch.findAll('.change-card')).toHaveLength(2);
   expect(batch.text()).toContain('新增');
   expect(batch.find('.task-actions a').exists()).toBe(true);
   batch.unmount();
@@ -239,7 +241,7 @@ it('starts and restores a pure chat without file controls', async () => {
   const wrapper = mount(App); await flushPromises();
   await wrapper.get('textarea').setValue('你好');
   await wrapper.get('.send-button').trigger('click'); await flushPromises();
-  expect(api.sendProjectTask).toHaveBeenCalledWith(null,[],'你好',true);
+  expect(api.sendProjectTask).toHaveBeenCalledWith(null,[],'你好',true,[]);
   expect(wrapper.text()).toContain('你好，我是助手');
   expect(wrapper.text()).not.toContain('项目文件');
   expect(wrapper.find('.task-actions').exists()).toBe(false);
@@ -251,8 +253,15 @@ it('starts and restores a pure chat without file controls', async () => {
   reopened.unmount();
 });
 it('renders a separate result and download for every modified file', () => {
-  const wrapper = mount(TaskProgress,{props:{stopping:false,task:{...completed,result:{kind:'edit',text:'两份文件已修改',outputs:[{file:newFile,changes:[]},{file:{...newFile,id:'other'},changes:[]}]}}}});
+  const wrapper = mount(TaskProgress,{props:{task:{...completed,result:{kind:'edit',text:'两份文件已修改',outputs:[{file:newFile,changes:[]},{file:{...newFile,id:'other'},changes:[]}]}}}});
   expect(wrapper.findAll('.task-actions a').map(a=>a.attributes('href'))).toEqual(['/api/files/new/download','/api/files/other/download']);
+  wrapper.unmount();
+});
+it('labels a rename-only result without change cards', () => {
+  const renamed = {...newFile, name:'结婚清单.docx'};
+  const wrapper = mount(TaskProgress,{props:{task:{...completed,result:{kind:'edit',text:'已重命名为「结婚清单.docx」，文档内容未改动。',file:renamed,changes:[],renamed:true}}}});
+  expect(wrapper.get('.result-file-tag').text()).toBe('已重命名');
+  expect(wrapper.findAll('.change-card')).toHaveLength(0);
   wrapper.unmount();
 });
 it('keeps cancelled attachment selection after reopening the project', async () => {
@@ -263,7 +272,7 @@ it('keeps cancelled attachment selection after reopening the project', async () 
   const reopened = mount(App); await flushPromises();
   expect(reopened.find('.selected-file').exists()).toBe(false);
   expect(reopened.find('.conversation-history').exists()).toBe(true);
-  expect(reopened.find('.composer-dock > button').exists()).toBe(true);
+  expect(reopened.find('.project-files-button').exists()).toBe(true);
   reopened.unmount();
 });
 it('sends the web switch value and remembers it after reload', async () => {
@@ -273,7 +282,7 @@ it('sends the web switch value and remembers it after reload', async () => {
   expect(wrapper.get('[role="switch"]').attributes('aria-checked')).toBe('false');
   await wrapper.get('textarea').setValue('今天的天气');
   await wrapper.get('.send-button').trigger('click'); await flushPromises();
-  expect(api.sendProjectTask).toHaveBeenCalledWith(null,[],'今天的天气',false);
+  expect(api.sendProjectTask).toHaveBeenCalledWith(null,[],'今天的天气',false,[]);
   wrapper.unmount();
   const reopened = mount(App); await flushPromises();
   expect(reopened.get('[role="switch"]').attributes('aria-checked')).toBe('false');
@@ -293,10 +302,10 @@ it('restores clickable web sources and rejects unsafe links', async () => {
   wrapper.unmount();
 });
 it('shows retrieval activity and search failure without claiming verification', () => {
-  const wrapper = mount(TaskProgress,{props:{stopping:false,task:{...running,web_activity:'正在搜索'}}});
+  const wrapper = mount(TaskProgress,{props:{task:{...running,web_activity:'正在搜索'}}});
   expect(wrapper.get('[role="status"]').text()).toContain('正在搜索');
   wrapper.unmount();
-  const failed = mount(TaskProgress,{props:{stopping:false,task:{...completed,result:{kind:'answer',text:'无法核实',web_status:'failed',web_notices:[{code:'timeout',message:'联网查询超时'}],web_sources:[]}}}});
+  const failed = mount(TaskProgress,{props:{task:{...completed,result:{kind:'answer',text:'无法核实',web_status:'failed',web_notices:[{code:'timeout',message:'联网查询超时'}],web_sources:[]}}}});
   expect(failed.text()).toContain('联网查询超时');
   expect(failed.find('.web-sources').exists()).toBe(false);
   failed.unmount();
@@ -309,6 +318,8 @@ it('new document keeps existing attachments, joins selection and has creation co
   await wrapper.get('textarea').setValue('新建一份文档');
   await wrapper.get('.send-button').trigger('click'); await flushPromises();
   await vi.advanceTimersByTimeAsync(1000); await flushPromises();
+  // Result cards follow the answer reveal.
+  await vi.advanceTimersByTimeAsync(2400); await flushPromises();
   expect(wrapper.text()).toContain('文档已生成');
   expect(wrapper.text()).not.toContain('查看修改内容');
   expect(wrapper.findAll('.selected-file-name')).toHaveLength(2);
@@ -317,10 +328,56 @@ it('new document keeps existing attachments, joins selection and has creation co
   wrapper.unmount();
 });
 it('shows repair progress only while a task is active', () => {
-  const wrapper = mount(TaskProgress, {props:{task:{...running,activity:'正在补充遗漏内容（1/2）',repair_round:1},stopping:false}});
+  const wrapper = mount(TaskProgress, {props:{task:{...running,activity:'正在补充遗漏内容（1/2）',repair_round:1}}});
   expect(wrapper.get('[role=status]').text()).toContain('正在补充遗漏内容（1/2）');
   wrapper.unmount();
-  const finished = mount(TaskProgress, {props:{task:{...completed,activity:'正在检查修改完整性',repair_round:1},stopping:false}});
+  const finished = mount(TaskProgress, {props:{task:{...completed,activity:'正在检查修改完整性',repair_round:1}}});
   expect(finished.find('[role=status]').exists()).toBe(false);
   finished.unmount();
+});
+
+// 焦点回到输入框需要真实挂载到 document，否则 jsdom 不会更新 activeElement。
+async function readyAttached() {
+  localStorage.setItem('office-agent-selected-project','source');
+  const wrapper = mount(App,{attachTo:document.body}); await flushPromises();
+  return wrapper;
+}
+it('returns the caret to the composer once a turn finishes', async () => {
+  vi.mocked(api.getTask).mockResolvedValue(completed);
+  const wrapper = await readyAttached();
+  const area = wrapper.get('textarea').element as HTMLTextAreaElement;
+  await wrapper.get('textarea').setValue('润色开头');
+  await wrapper.get('.send-button').trigger('click'); await flushPromises();
+  expect(document.activeElement).not.toBe(area);
+  await vi.advanceTimersByTimeAsync(1000); await flushPromises();
+  expect(document.activeElement).toBe(area);
+  expect(area.selectionStart).toBe(area.value.length);
+  wrapper.unmount();
+});
+it('does not take the caret back while the user types elsewhere or into a dialog', async () => {
+  vi.mocked(api.getTask).mockResolvedValue(completed);
+  const wrapper = await readyAttached();
+  const area = wrapper.get('textarea').element as HTMLTextAreaElement;
+  await wrapper.get('textarea').setValue('润色开头');
+  await wrapper.get('.send-button').trigger('click'); await flushPromises();
+  const dialog = document.createElement('div');
+  dialog.setAttribute('role','dialog');
+  const input = document.createElement('input');
+  dialog.append(input); document.body.append(dialog);
+  input.focus();
+  await vi.advanceTimersByTimeAsync(1000); await flushPromises();
+  expect(document.activeElement).toBe(input);
+  expect(document.activeElement).not.toBe(area);
+  wrapper.unmount();
+});
+it('keeps the draft and puts the caret at its end when sending fails', async () => {
+  vi.mocked(api.sendProjectTask).mockRejectedValue(new Error('无法创建任务'));
+  const wrapper = await readyAttached();
+  const area = wrapper.get('textarea').element as HTMLTextAreaElement;
+  await wrapper.get('textarea').setValue('修改开头');
+  await wrapper.get('.send-button').trigger('click'); await flushPromises();
+  expect(document.activeElement).toBe(area);
+  expect(area.value).toBe('修改开头');
+  expect(area.selectionStart).toBe('修改开头'.length);
+  wrapper.unmount();
 });

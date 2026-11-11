@@ -27,8 +27,6 @@ class RequestTests(unittest.IsolatedAsyncioTestCase):
         cases = [
             (model.Review, dict(complete=True,text='已完成')),
             (model.Memory, dict(summary='摘要',preferences=[])),
-            (model.Route, dict(kind='answer',scope='all',instruction='总结')),
-            (model.ProjectRoute, dict(kind='edit',file_ids=['one'])),
             (model.Response, dict(kind='answer',text='回答')),
             (model.NewDocument, dict(name='文档',title='文档',sections=[dict(kind='paragraph',text='正文')])),
         ]

@@ -4,9 +4,9 @@ import threading
 import time
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
-from app import database, model
+from app import database
+import loop_support
 import test_files
 from test_documents import example
 
@@ -22,11 +22,8 @@ class HistoryTests(unittest.TestCase):
         return response.json()
 
     def run_task(self, file, failure=False):
-        async def answer(prompt, blocks):
-            if failure:
-                raise model.ModelError('测试失败')
-            return model.Suggestion(status='edit', block_id=blocks[1]['id'], new_text=blocks[1]['text'] + '修改', explanation='调整表达')
-        with patch('app.model.suggest', side_effect=answer):
+        handler = loop_support.fail('测试失败') if failure else loop_support.edit()
+        with loop_support.patch_agent(handler):
             response = self.client.post('/api/tasks', json={'file_id':file['id'],'prompt':'修改正文'})
             self.assertEqual(response.status_code, 202, response.text)
             task_id = response.json()['id']
@@ -87,10 +84,10 @@ class HistoryTests(unittest.TestCase):
         original = self.upload(example()).json()
         unrelated = self.upload(example()).json()
         started = threading.Event()
-        async def slow(*args):
+        async def slow(*args, **kwargs):
             started.set()
             await asyncio.sleep(60)
-        with patch('app.model.suggest', side_effect=slow):
+        with loop_support.patch_agent(slow):
             state = self.client.post('/api/tasks',json={'file_id':original['id'],'prompt':'修改'}).json()
             self.assertTrue(started.wait(2))
             self.assertEqual(self.history(original)['active_task']['id'],state['id'])

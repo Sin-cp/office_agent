@@ -1,5 +1,5 @@
 import { computed, nextTick, onBeforeUnmount, ref } from 'vue';
-import { getHistory, projectHistory, sendProjectTask, createProject, getTask, cancelTask, ApiError, type FileInfo, type TaskState } from './api';
+import { getHistory, projectHistory, sendProjectTask, createProject, getTask, cancelTask, deleteTask, ApiError, type AssetInfo, type FileInfo, type TaskState } from './api';
 
 const active = (task: TaskState) => ['queued', 'running', 'cancelling'].includes(task.status);
 const storageKey = 'office-agent-selected-project';
@@ -16,6 +16,7 @@ export function useDocumentHistory(onComplete: () => void) {
   let sourceRoots: Record<string, string> = {};
   const sourceCount = ref(0);
   const attachments = ref<FileInfo[]>([]);
+  const images = ref<AssetInfo[]>([]);
   const selected = computed(() => attachments.value[0] || null);
   const records = ref<TaskState[]>([]);
   const draft = ref(''), known = ref(false), historyLoading = ref(false), historyError = ref('');
@@ -24,6 +25,10 @@ export function useDocumentHistory(onComplete: () => void) {
   const requestedId = ref<string | null>(null);
   const activeTask = computed(() => records.value.find(active));
   const busy = computed(() => sending.value || !!activeTask.value);
+  const canStop = computed(() => !!activeTask.value);
+  const stopPending = computed(
+    () => stopping.value || activeTask.value?.status === 'cancelling',
+  );
   const conversation = computed(() => known.value && records.value.length > 0);
   const scrollArea = ref<HTMLElement>();
   let epoch = 0, timer: ReturnType<typeof setTimeout> | undefined, disposed = false;
@@ -86,7 +91,7 @@ export function useDocumentHistory(onComplete: () => void) {
     clearTimeout(timer);
     const id = typeof file === 'string' ? file : file.id;
     if (!preserveDraft && selected.value?.id !== id) draft.value = '';
-    attachments.value = []; sourceRoots = {}; sourceCount.value = 0;
+    attachments.value = []; images.value = []; sourceRoots = {}; sourceCount.value = 0;
     requestedId.value = id;
     projectId.value = null;
     remember(id);
@@ -143,22 +148,44 @@ export function useDocumentHistory(onComplete: () => void) {
     if (busy.value || historyLoading.value) return;
     ++epoch; clearTimeout(timer);
     sourceRoots = {};
-    projectId.value = null; sourceCount.value = 0; attachments.value = []; requestedId.value = null; records.value = []; draft.value = ''; known.value = false;
+    projectId.value = null; sourceCount.value = 0; attachments.value = []; images.value = []; requestedId.value = null; records.value = []; draft.value = ''; known.value = false;
     historyError.value = ''; progressError.value = ''; sendError.value = ''; olderError.value = ''; cursor.value = null;
     try { localStorage.removeItem(storageKey); localStorage.removeItem('office-agent-current-task'); } catch { /* optional */ }
   }
-  async function send() {
-    if (busy.value || historyLoading.value || historyError.value || !draft.value.trim()) return;
+  // Shared by a typed prompt and by "重新生成": both open a new turn with the
+  // current attachments, so a regenerated question keeps the conversation in sync.
+  async function submit(prompt: string, web = webEnabled.value) {
+    if (busy.value || historyLoading.value || historyError.value || !prompt.trim()) return false;
     const revision = epoch;
     sending.value = true; sendError.value = ''; progressError.value = '';
     try {
-      const value = await sendProjectTask(projectId.value, attachments.value.map(f => f.id), draft.value.trim(), webEnabled.value);
-      if (disposed || revision !== epoch) return;
+      const value = await sendProjectTask(projectId.value, attachments.value.map(f => f.id), prompt.trim(), web, images.value.map(i => i.id));
+      if (disposed || revision !== epoch) return false;
       projectId.value = value.project_id!; requestedId.value = value.project_id!; remember(value.project_id!); known.value = true;
-      receive(value, true); draft.value = ''; onComplete();
+      images.value = [];
+      receive(value, true); onComplete();
       if (active(value)) timer = setTimeout(() => void poll(value.id, revision), 1000);
-    } catch (cause) { if (revision === epoch) sendError.value = (cause as Error).message; }
+      return true;
+    } catch (cause) { if (revision === epoch) sendError.value = (cause as Error).message; return false; }
     finally { sending.value = false; }
+  }
+  async function send() {
+    if (!draft.value.trim()) return;
+    if (await submit(draft.value)) draft.value = '';
+  }
+  async function regenerate(turn: TaskState) {
+    if (!turn.prompt.trim() || historyLoading.value) return;
+    if (busy.value) {
+      sendError.value = '正在处理另一轮对话，请等它结束后再重新生成。';
+      return;
+    }
+    await submit(turn.prompt, turn.web_enabled ?? webEnabled.value);
+  }
+  async function deleteTurn(turn: TaskState) {
+    if (active(turn)) return;
+    await deleteTask(turn.id);
+    records.value = records.value.filter(item => item.id !== turn.id);
+    if (progressError.value.includes('任务不存在')) progressError.value = '';
   }
   async function stop() {
     if (!activeTask.value || stopping.value) return;
@@ -193,6 +220,13 @@ export function useDocumentHistory(onComplete: () => void) {
     }
     return projectId.value;
   }
+  function addImage(asset: AssetInfo) {
+    if (busy.value) return;
+    if (!images.value.some(item => item.id === asset.id)) images.value.push(asset);
+  }
+  function removeImage(id: string) {
+    if (!busy.value) images.value = images.value.filter(item => item.id !== id);
+  }
   function attach(file: FileInfo) {
     if (busy.value) return;
     if (!attachments.value.some(f => f.id === file.id)) attachments.value.push(file);
@@ -210,6 +244,6 @@ export function useDocumentHistory(onComplete: () => void) {
     return false;
   }
   onBeforeUnmount(() => { disposed = true; ++epoch; clearTimeout(timer); });
-  return { webEnabled, setWebEnabled, projectId, selected, sourceCount, attachments, ensureProject, attach, detach, records, draft, known, historyLoading, historyError, sending, stopping, progressError, sendError,
-    olderLoading, olderError, cursor, busy, conversation, scrollArea, select, retry, older, clear, send, stop, restore, projectDeleted };
+  return { webEnabled, setWebEnabled, projectId, selected, sourceCount, attachments, images, addImage, removeImage, ensureProject, attach, detach, records, draft, known, historyLoading, historyError, sending, stopping, progressError, sendError,
+    olderLoading, olderError, cursor, busy, canStop, stopPending, conversation, scrollArea, select, retry, older, clear, send, regenerate, deleteTurn, stop, restore, projectDeleted };
 }

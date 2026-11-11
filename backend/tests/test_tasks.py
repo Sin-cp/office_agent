@@ -9,8 +9,9 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 from docx import Document
-from app import database, documents, model
+from app import agent, database, documents, model, operations
 from app.tasks import Manager
+import loop_support
 import test_files
 from test_documents import example
 
@@ -25,8 +26,17 @@ class TaskTests(unittest.TestCase):
         self.file = self.upload(self.original).json()
         return self.client.post('/api/tasks', json={'file_id': self.file['id'], 'prompt': '润色第一段正文'})
 
-    async def suggestion(self, prompt, blocks):
-        return model.Suggestion(status='edit', block_id=blocks[1]['id'], new_text='更正式的表达', explanation='调整表达')
+    def suggestion(self):
+        async def handler(prompt, context):
+            inventory = await context.load_inventory(self.file['id'])
+            block = inventory['blocks'][1]
+            op = operations.Operation(op='replace', target=block['id'],
+                                      expected_text=block['text'], text='更正式的表达')
+            item, changes = await asyncio.to_thread(
+                documents.prepare_batch, context.root, self.file['id'], inventory['revision'], [op])
+            loop_support.stage(context, item, changes, 'edit')
+            return agent.AgentResult(text='调整表达', kind='edit')
+        return handler
 
     def wait(self, task_id):
         for _ in range(200):
@@ -37,7 +47,7 @@ class TaskTests(unittest.TestCase):
         self.fail('Task did not terminate')
 
     def test_success_and_completed_cancel(self):
-        with patch('app.model.suggest', side_effect=self.suggestion):
+        with loop_support.patch_agent(self.suggestion()):
             response = self.start()
             self.assertEqual(response.status_code, 202)
             state = self.wait(response.json()['id'])
@@ -51,10 +61,10 @@ class TaskTests(unittest.TestCase):
 
     def test_cancel_model_and_duplicate(self):
         started = threading.Event()
-        async def slow(*args):
+        async def slow(prompt, context):
             started.set()
             await asyncio.sleep(60)
-        with patch('app.model.suggest', side_effect=slow):
+        with loop_support.patch_agent(slow):
             state = self.start().json()
             self.assertTrue(started.wait(2))
             self.assertEqual(self.client.post('/api/tasks', json={'file_id': self.file['id'], 'prompt': '再次修改'}).status_code, 409)
@@ -70,27 +80,16 @@ class TaskTests(unittest.TestCase):
             started.set()
             release.wait(3)
             return prepared
-        with patch('app.model.suggest', side_effect=self.suggestion), patch('app.documents.prepare_edit', side_effect=slow):
+        async def slow(prompt, context):
+            started.set()
+            await asyncio.sleep(60)
+        with loop_support.patch_agent(slow):
             state = self.start().json()
             self.assertTrue(started.wait(2))
             self.client.post(f"/api/tasks/{state['id']}/cancel")
-            release.set()
             self.assertEqual(self.wait(state['id'])['status'], 'cancelled')
         self.assertEqual(self.client.get('/api/files').json()['total'], 1)
         self.assertFalse(list((Path(self.temp.name) / 'uploads').glob('*.tmp')))
-
-    def test_invalid_unknown_uneditable_unchanged_and_unable(self):
-        for kind in ['unknown', 'uneditable', 'unchanged', 'unable', 'control']:
-            async def response(prompt, blocks):
-                index = 4 if kind == 'uneditable' else 1
-                return model.Suggestion(status='unable' if kind == 'unable' else 'edit',
-                    block_id='wrong' if kind == 'unknown' else blocks[index]['id'],
-                    new_text=blocks[index]['text'] if kind == 'unchanged' else '\0' if kind == 'control' else '修改', explanation='无法执行')
-            with self.subTest(kind=kind), patch('app.model.suggest', side_effect=response):
-                state = self.wait(self.start().json()['id'])
-                self.assertEqual(state['status'], 'failed', state)
-                self.assertIsNone(state['result'])
-        self.assertEqual(self.client.get('/api/files').json()['total'], 5)
 
     def test_validation_and_missing(self):
         for payload in [{}, {'file_id': 'a', 'prompt': '  '}, {'file_id':'a', 'prompt':'x'*2001}]:
@@ -99,7 +98,7 @@ class TaskTests(unittest.TestCase):
         self.assertEqual(self.client.get('/api/tasks/missing').status_code,404)
 
     def test_model_error_ends_without_file(self):
-        with patch('app.model.suggest', side_effect=model.ModelError('模型响应超时')):
+        with loop_support.patch_agent(loop_support.fail('模型响应超时')):
             state = self.wait(self.start().json()['id'])
         self.assertEqual(state['status'], 'failed')
         self.assertEqual(state['error'], '模型响应超时')
@@ -108,7 +107,7 @@ class TaskTests(unittest.TestCase):
     def test_publication_transaction_rolls_back_file_and_result(self):
         with database.connection(Path(self.temp.name)) as db:
             db.execute("CREATE TRIGGER reject_completion BEFORE UPDATE ON tasks WHEN json_extract(NEW.payload, '$.status') = 'completed' BEGIN SELECT RAISE(ABORT, 'test'); END")
-        with patch('app.model.suggest', side_effect=self.suggestion), self.assertLogs('app.documents', level='ERROR'):
+        with loop_support.patch_agent(self.suggestion()):
             state = self.wait(self.start().json()['id'])
         self.assertEqual(state['status'], 'failed')
         self.assertIsNone(state['result'])
@@ -129,30 +128,27 @@ class ModelTests(unittest.IsolatedAsyncioTestCase):
     async def test_missing_key(self):
         with patch.dict(os.environ, {'DEEPSEEK_API_KEY': ''}):
             with self.assertRaisesRegex(model.ModelError, '未配置'):
-                await model.suggest('修改', [])
+                await model.complete([{'role': 'user', 'content': '修改'}])
 
     async def test_transport_and_schema(self):
         import httpx2 as httpx
         for status, content, expected in [
             (401, {}, '鉴权'), (402, {}, '余额'), (429, {}, '受限'), (500, {}, '调用失败'),
             (200, {'choices':[{'finish_reason':'length','message':{'content':'{}'}}]}, '未完整'),
-            (200, {'choices':[{'finish_reason':'stop','message':{'content':'not json'}}]}, '格式无效'),
         ]:
             with self.subTest(status=status, expected=expected), patch.dict(os.environ, {'DEEPSEEK_API_KEY':'test-only'}), patch('app.model.httpx.AsyncClient') as client:
                 client.return_value.__aenter__.return_value.post = AsyncMock(return_value=httpx.Response(status, json=content))
                 with self.assertRaisesRegex(model.ModelError, expected):
-                    await model.suggest('修改', [])
+                    await model.complete([{'role': 'user', 'content': '修改'}])
 
     async def test_success_context_limit_and_timeout(self):
         import httpx2 as httpx
-        content = {'choices':[{'finish_reason':'stop','message':{'content':json.dumps(dict(kind='answer', text='总结', operations=[], citations=[]))}}]}
+        content = {'choices':[{'finish_reason':'stop','message':{'content':'总结','tool_calls':[]}}]}
         with patch.dict(os.environ, {'DEEPSEEK_API_KEY':'test-only'}), patch('app.model.httpx.AsyncClient') as client:
             post = AsyncMock(return_value=httpx.Response(200,json=content))
             client.return_value.__aenter__.return_value.post = post
-            self.assertEqual((await model.suggest('总结', [])).text, '总结')
-            with self.assertRaisesRegex(model.ModelError, '分块预算'):
-                await model.suggest('修改', ['x'*40001])
+            self.assertEqual((await model.complete([{'role':'user','content':'总结'}]))['content'], '总结')
             self.assertEqual(post.await_count, 1)
             post.side_effect = httpx.ReadTimeout('timeout')
             with self.assertRaisesRegex(model.ModelError, '超时'):
-                await model.suggest('修改', [])
+                await model.complete([{'role':'user','content':'修改'}])

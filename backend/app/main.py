@@ -1,5 +1,6 @@
 """Run from backend/: python -m uvicorn app.main:app --reload."""
 
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 from dotenv import load_dotenv
@@ -11,6 +12,7 @@ from pydantic import BaseModel
 from . import database
 from .tasks import Manager, router as tasks_router
 from .files import router
+from .images import router as images_router
 from .projects import router as projects_router, recover_deletions
 from .documents import router as documents_router
 from .conversations import router as conversations_router
@@ -19,7 +21,9 @@ from .storage import data_directory
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    load_dotenv(Path(__file__).resolve().parents[2] / '.env', override=False)
+    # Tests stay hermetic: a developer's .env must not change feature switches.
+    if 'unittest' not in sys.modules:
+        load_dotenv(Path(__file__).resolve().parents[2] / '.env', override=False)
     app.state.data_dir = data_directory()
     database.initialize(app.state.data_dir)
     recover_deletions(app.state.data_dir)
@@ -32,6 +36,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Office Agent API", version="0.4.0", lifespan=lifespan)
 app.include_router(router)
+app.include_router(images_router)
 app.include_router(documents_router)
 app.include_router(tasks_router)
 app.include_router(projects_router)

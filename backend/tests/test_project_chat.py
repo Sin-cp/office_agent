@@ -1,4 +1,5 @@
 """Project conversations and multi-document transactional publication."""
+import asyncio
 import io
 import json
 import threading
@@ -7,8 +8,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 from docx import Document
-from app import database, documents, model, operations
+from app import agent, conversations, database, documents, model, operations
 from app.tasks import Manager
+import loop_support
 import test_files
 from test_documents import example
 
@@ -36,19 +38,10 @@ class ProjectChatTests(unittest.TestCase):
         self.fail('Task timed out')
 
     def turn(self, project=None, files=None, reply=None, prompt='你好'):
-        async def answer(prompt, inventories, load_inventory=None):
-            return model.Response(kind='answer', text='正常聊天回答')
-        with patch('app.model.respond_project', side_effect=reply or answer):
+        with loop_support.patch_agent(reply or loop_support.answer('正常聊天回答')):
             response = self.client.post('/api/tasks', json={'project_id':project,'file_ids':files or [],'prompt':prompt})
             self.assertEqual(response.status_code, 202, response.text)
             return self.wait(response.json()['id'])
-
-    async def edit_all(self, prompt, inventories, load_inventory=None):
-        if load_inventory:
-            inventories = [await load_inventory(d) for d in list(inventories)]
-        return model.Response(kind='edit', text='全部修改完成', operations=[
-            operations.Operation(op='replace', target=d['blocks'][0]['id'], expected_text=d['blocks'][0]['text'], text='新的标题')
-            for d in inventories])
 
     def test_plain_chat_title_rename_restart_paging_and_delete(self):
         prompt = '  ' + '标题内容'*10 + '  '
@@ -61,10 +54,10 @@ class ProjectChatTests(unittest.TestCase):
         self.assertEqual(listing['file_count'],0)
         self.assertEqual(self.client.patch('/api/projects/'+project,json={'name':'自定义名字'}).status_code,200)
         self.assertEqual(self.client.patch('/api/projects/'+project,json={'name':'  '}).status_code,422)
-        async def follow(prompt, inventories, load_inventory=None):
-            self.assertEqual(inventories,[])
+        async def follow(prompt, context):
+            self.assertEqual(context.files,[])
             self.assertTrue(any(m['content'].get('text')=='正常聊天回答' for m in model.conversation_context.get()['messages']))
-            return model.Response(kind='answer',text='记得之前的聊天')
+            return agent.AgentResult(text='记得之前的聊天')
         second = self.turn(project,reply=follow)
         self.assertEqual(second['status'],'completed',second)
         root=Path(self.temp.name)
@@ -82,13 +75,13 @@ class ProjectChatTests(unittest.TestCase):
         first=self.turn()
         project=first['project_id']
         a,b=self.upload(project),self.upload(project)
-        state=self.turn(project,[a['id'],b['id']],self.edit_all,'修改全部文件的标题')
+        state=self.turn(project,[a['id'],b['id']],loop_support.edit([a['id'],b['id']]),'修改全部文件的标题')
         self.assertEqual(state['status'],'completed',state)
         outputs=state['result']['outputs']
         self.assertEqual(len(outputs),2)
         for output in outputs:
             data=self.client.get('/api/files/'+output['file']['id']+'/download').content
-            self.assertEqual(Document(io.BytesIO(data)).paragraphs[0].text,'新的标题')
+            self.assertEqual(Document(io.BytesIO(data)).paragraphs[0].text,'项目背景修改')
         for source in [a,b]:
             original=self.client.get('/api/files/'+source['id']+'/download').content
             self.assertEqual(Document(io.BytesIO(original)).paragraphs[0].text,'项目背景')
@@ -102,9 +95,9 @@ class ProjectChatTests(unittest.TestCase):
         self.assertEqual(len(history['items'][-1]['result']['outputs']),2)
         self.assertEqual(self.client.post('/api/tasks',json={'project_id':project,'file_ids':[a['id']],'prompt':'修改'}).status_code,409)
         # Clearing attachments is represented by an explicit empty list, never defaulting to all project files.
-        async def chat(prompt, inventories, load_inventory=None):
-            self.assertEqual(inventories,[])
-            return model.Response(kind='answer',text='不读取附件')
+        async def chat(prompt, context):
+            self.assertEqual(context.files,[])
+            return agent.AgentResult(text='不读取附件')
         self.assertEqual(self.turn(project,[],chat)['status'],'completed')
         self.assertEqual(self.client.delete('/api/projects/'+project).status_code,200)
         self.assertEqual(list((Path(self.temp.name)/'uploads').iterdir()),[])
@@ -119,12 +112,9 @@ class ProjectChatTests(unittest.TestCase):
 
     def test_invalid_second_document_rolls_back_prepared_first(self):
         project=self.create(); files=[self.upload(project),self.upload(project)]
-        async def invalid(prompt, inventories, load_inventory=None):
-            if load_inventory:
-                inventories = [await load_inventory(d) for d in list(inventories)]
-            result=await self.edit_all(prompt,inventories)
-            result.operations[1].expected_text='错误的原文'
-            return result
+        async def invalid(prompt, context):
+            await loop_support.edit([files[0]['id']])(prompt, context)
+            raise model.ModelError('修改目标不属于本轮选中文件')
         state=self.turn(project,[f['id'] for f in files],invalid)
         self.assertEqual(state['status'],'failed',state)
         self.assert_unchanged(project,files)
@@ -134,31 +124,31 @@ class ProjectChatTests(unittest.TestCase):
         root=Path(self.temp.name)
         with database.connection(root) as db:
             db.execute("CREATE TRIGGER reject_completion BEFORE UPDATE ON tasks WHEN json_extract(NEW.payload,'$.status')='completed' BEGIN SELECT RAISE(ABORT,'test'); END")
-        state=self.turn(project,[f['id'] for f in files],self.edit_all)
+        state=self.turn(project,[f['id'] for f in files],loop_support.edit([f['id'] for f in files]))
         self.assertEqual(state['status'],'failed',state); self.assert_unchanged(project,files)
         with database.connection(root) as db: db.execute('DROP TRIGGER reject_completion')
         replace=Path.replace; moved=0
         def fail_second(path,target):
             nonlocal moved
-            if path.name.startswith('task-'):
+            if path.suffix == '.tmp':
                 moved+=1
                 if moved==2: raise OSError('Cannot publish second output')
             return replace(path,target)
         with patch.object(Path,'replace',fail_second):
-            state=self.turn(project,[f['id'] for f in files],self.edit_all)
+            state=self.turn(project,[f['id'] for f in files],loop_support.edit([f['id'] for f in files]))
         self.assertEqual(state['status'],'failed',state); self.assert_unchanged(project,files)
         self.assertFalse(list(root.glob('publication-*')))
 
-    def test_cancel_during_preparation_does_not_publish_any_file(self):
+    def test_cancel_during_generation_does_not_publish_any_file(self):
         project=self.create(); files=[self.upload(project),self.upload(project)]
-        started,release=threading.Event(),threading.Event()
-        original=documents.prepare_batch
-        def slow(*args):
-            prepared=original(*args); started.set(); release.wait(3); return prepared
-        with patch('app.model.respond_project',side_effect=self.edit_all),patch('app.documents.prepare_batch',side_effect=slow):
+        started=threading.Event()
+        async def slow(prompt, context):
+            started.set()
+            await asyncio.sleep(60)
+        with loop_support.patch_agent(slow):
             created=self.client.post('/api/tasks',json={'project_id':project,'file_ids':[f['id'] for f in files],'prompt':'修改全部'}).json()
             self.assertTrue(started.wait(2))
-            self.client.post('/api/tasks/'+created['id']+'/cancel'); release.set()
+            self.client.post('/api/tasks/'+created['id']+'/cancel')
             state=self.wait(created['id'])
         self.assertEqual(state['status'],'cancelled',state); self.assert_unchanged(project,files)
 
@@ -175,37 +165,45 @@ class ProjectChatTests(unittest.TestCase):
         self.assertFalse((root/'uploads'/orphan).exists())
         self.assertEqual(self.client.get('/api/files/'+file['id']+'/download').status_code,200)
 
+    def test_general_question_in_file_project_answers_once(self):
+        project=self.create(); file=self.upload(project)
+        with loop_support.calls(loop_support.text_reply('一般知识回答')):
+            response=self.client.post('/api/tasks',json={'project_id':project,'file_ids':[file['id']],
+                'prompt':'我有五万块钱，帮我规划一下，我可以买哪些结婚用的三金','web_enabled':False})
+            self.assertEqual(response.status_code,202,response.text)
+            state=self.wait(response.json()['id'])
+        self.assertEqual(state['status'],'completed',state)
+        self.assertEqual(state['result']['kind'],'answer')
+        self.assertEqual(state['result']['text'],'一般知识回答')
+
+    def test_context_includes_project_snapshot_and_trims_changes(self):
+        project=self.create(); file=self.upload(project); root=Path(self.temp.name)
+        content=dict(text='已修改两份内容',kind='edit',status='completed',
+            changes=[dict(op='replace',block_id=f'b{i}',location=f'正文第{i+1}段',before='旧'*300,after='新'*300) for i in range(10)],
+            outputs=[dict(file=dict(id='x',name='same_修改版1.docx'),changes=[dict(op='replace')])],
+            citations=[dict(file_id=file['id'],block_id='b',location='正文第1段',quote='引'*200) for _ in range(6)],
+            web_sources=[dict(title=f'来源{i}',url='https://example.com') for i in range(6)])
+        with database.connection(root) as db:
+            db.execute("INSERT INTO messages(id,project_id,task_id,role,content,file_id,created_at) VALUES (?,?,?,?,?,?,?)",
+                       ('m1',project,'t1','assistant',json.dumps(content,ensure_ascii=False),file['id'],1.0))
+        built=conversations.context(root,project,file['id'])
+        self.assertEqual(built['project']['name'],'新项目')
+        self.assertEqual(built['project']['sources'][0]['name'],'same.docx')
+        self.assertEqual(built['project']['sources'][0]['current']['name'],'same.docx')
+        self.assertEqual(built['current_file']['name'],'same.docx')
+        message=built['messages'][-1]['content']
+        self.assertEqual(message['change_count'],10)
+        self.assertEqual(len(message['changes']),3)
+        self.assertLessEqual(max(len(item['before']) for item in message['changes']),160)
+        self.assertEqual(message['outputs'][0]['file'],'same_修改版1.docx')
+        self.assertEqual(len(message['citations']),3)
+        self.assertEqual(len(message['web_sources']),3)
+        with database.connection(root) as db:
+            stored=json.loads(db.execute('SELECT content FROM messages WHERE project_id=?',(project,)).fetchone()['content'])
+        self.assertEqual(len(stored['changes']),10)
+
 
 class ProjectModelTests(unittest.IsolatedAsyncioTestCase):
-    async def test_chat_uses_plain_response_and_actual_model(self):
-        async def call(system,content,schema=None):
-            if schema is model.ProjectRoute: return model.ProjectRoute(kind='chat')
-            self.assertIsNone(schema)
-            self.assertIn('configured-model',system)
-            return '自由格式回答'
-        with patch.dict('os.environ',{'DEEPSEEK_MODEL':'configured-model'}),patch('app.model.call',side_effect=call):
-            result=await model.respond_project('你是什么模型',[])
-        self.assertEqual(result.text,'自由格式回答')
-
-    async def test_multi_file_answer_and_ambiguous_edit(self):
-        inventories=[dict(id=i,name=i+'.docx',blocks=[dict(id=i+':p:0',text=i,kind='paragraph')],coverage=[]) for i in ('a','b')]
-        async def answer(system,content,schema=None):
-            if schema is model.ProjectRoute: return model.ProjectRoute(kind='answer',file_ids=['a','b'])
-            self.assertIsNone(schema)
-            self.assertEqual({b['file_id'] for b in content['documents']},{'a','b'})
-            return '综合两份文件'
-        with patch('app.model.call',side_effect=answer):
-            self.assertEqual((await model.respond_project('比较',inventories)).text,'综合两份文件')
-        with patch('app.model.call',return_value=model.ProjectRoute(kind='clarify',question='修改哪一份？')):
-            result=await model.respond_project('改一下标题',inventories)
-        self.assertEqual(result.kind,'clarify'); self.assertEqual(result.operations,[])
-
-    async def test_edit_route_passes_only_named_files_to_workflow(self):
-        inventories=[dict(id=i,name=i+'.docx',blocks=[dict(id=i+':p:0',text=i,kind='paragraph')],coverage=[]) for i in ('a','b')]
-        with patch('app.model.call',return_value=model.ProjectRoute(kind='edit',file_ids=['a'])),patch('app.edit_workflow.run',return_value=model.Response(kind='clarify',text='具体问题')) as workflow:
-            await model.respond_project('只修改a',inventories)
-        self.assertEqual([d['id'] for d in workflow.call_args.args[1]],['a'])
-
     async def test_plain_call_does_not_request_json(self):
         import os
         class Response:

@@ -31,6 +31,13 @@ def initialize(root: Path):
         columns = {row[1] for row in db.execute("PRAGMA table_info(files)")}
         if "source_file_id" not in columns:
             db.execute("ALTER TABLE files ADD COLUMN source_file_id TEXT")
+        # Images are inputs, not document versions: they live in their own table.
+        db.execute("""CREATE TABLE IF NOT EXISTS assets (
+            id TEXT PRIMARY KEY, project_id TEXT NOT NULL, name TEXT NOT NULL,
+            mime TEXT NOT NULL, size INTEGER NOT NULL, storage_key TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )""")
+        db.execute("CREATE INDEX IF NOT EXISTS assets_project ON assets(project_id)")
         from .history import migrate
         migrate(db)
         from .projects import migrate as migrate_projects
